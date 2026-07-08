@@ -55,6 +55,9 @@ inline const char* index_html = R"sa3web(
   button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; font-weight: 600; }
   button.primary:hover { background: #388bfd; }
   button.primary:disabled { opacity: .5; cursor: not-allowed; }
+  button.loop { background: #6e40c9; border-color: #6e40c9; color: #fff; font-weight: 600; }
+  button.loop:hover { background: #7c4dff; }
+  button.loop:disabled { opacity: .5; cursor: not-allowed; }
   button.small { padding: 2px 8px; font-size: 0.78rem; }
   button.danger { border-color: var(--red); color: var(--red); }
   button.danger:hover { background: var(--red); color: #fff; }
@@ -89,6 +92,27 @@ inline const char* index_html = R"sa3web(
   #error-msg { color: var(--red); font-size: 0.85rem; margin-top: 6px; min-height: 1.2em; }
   .small-note { font-size: 0.75rem; color: var(--muted); margin-top: 2px; }
   hr { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
+  .song-entry { display:flex; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid var(--border); }
+  .song-entry:last-child { border-bottom:none; }
+  .song-entry .song-name { flex:0 0 auto; font-size:0.85rem; font-weight:500; min-width:150px; }
+  .song-entry audio { height:32px; flex:0 0 200px; }
+  .song-entry .song-params { flex:1; font-size:0.75rem; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+  .song-entry .song-actions { display:flex; gap:3px; flex:0 0 auto; }
+  #past-songs { max-height:none; }
+  #past-songs:empty::after { content:"No past songs yet"; display:block; font-size:0.82rem; color:var(--muted); padding:12px 0; }
+  [data-theme="light"] {
+    --bg: #eef0f2; --surface: #ffffff; --border: #d0d7de;
+    --text: #1f2328; --muted: #656d76; --accent: #0969da;
+    --green: #1a7f37; --red: #cf222e; --orange: #bf8700;
+  }
+  [data-theme="light"] input, [data-theme="light"] select, [data-theme="light"] textarea { background: #ffffff; }
+  [data-theme="light"] button { background: #f6f8fa; }
+  [data-theme="light"] button:hover { background: #eaeef2; }
+  [data-theme="light"] button.primary { background: #0969da; border-color: #0969da; }
+  [data-theme="light"] button.loop { background: #8250df; border-color: #8250df; }
+  [data-theme="light"] button.loop:hover { background: #9855ff; }
+  [data-theme="light"] .lora-tag { background: #eef1f6; border-color: #d0d7de; }
+  [data-theme="light"] .lora-tag .lora-str { color: #656d76; }
   @media (max-width: 600px) {
     .row { flex-direction: column; }
     .col { min-width: 100%; }
@@ -107,6 +131,7 @@ inline const char* index_html = R"sa3web(
     <span id="model-info" style="display:none;font-size:0.82rem;color:var(--muted)"></span>
   </div>
   <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+    <button id="theme-btn" class="small" title="Toggle dark/light theme" style="font-size:1.1rem;line-height:1;padding:4px 10px">☀️</button>
     <button id="save-config-btn" class="small" title="Save current config">💾 Save</button>
     <button id="load-config-btn" class="small" title="Load config file">📂 Load</button>
     <span id="config-filename" style="font-size:0.78rem;color:var(--muted);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
@@ -273,7 +298,7 @@ inline const char* index_html = R"sa3web(
   <div class="row gapped">
     <div class="col"><button id="gen-btn" class="primary" style="width:100%">🎵 Generate</button></div>
     <div class="col">
-      <button id="loop-btn" style="width:100%">🔄 Generate Loop</button>
+      <button id="loop-btn" class="loop" style="width:100%">🔄 Generate Loop</button>
     </div>
   </div>
   <div class="row gapped" style="margin-top:8px">
@@ -292,10 +317,19 @@ inline const char* index_html = R"sa3web(
   </div>
   <hr>
   <div id="result-section" style="display:none">
-    <audio id="result-audio" controls></audio>
+    <div style="display:flex;align-items:center;gap:8px">
+      <audio id="result-audio" controls style="flex:1;min-width:0"></audio>
+      <button id="delete-current-btn" class="small danger" style="flex:none">✕ Delete</button>
+    </div>
     <div id="seed-info"></div>
   </div>
 </div>
+
+<!-- ─── Past Songs ──────────────────────────────────────────── -->
+<h2 style="display:flex;align-items:center;gap:8px">Past Songs <span id="past-count" class="badge">0</span>
+  <button id="clear-all-btn" class="small danger" style="margin-left:auto">🗑 Clear All</button>
+</h2>
+<div id="past-songs" class="card"></div>
 
 <script src="app.js"></script>
 </body>
@@ -325,6 +359,7 @@ const DIST_SHIFT_LABELS = {
 const server = { host: "127.0.0.1", port: 8006 };
 let loraList = [];
 let activeLoras = [];
+let pastSongs = [];
 // ─── DOM helpers ────────────────────────────────────────────────────────────
 const $ = (s) => document.querySelector(s);
 function val(s) {
@@ -508,8 +543,21 @@ function onDistShiftChange() {
 }
 // ─── Generate ───────────────────────────────────────────────────────────────
 let pollTimer = null;
+let currentSongDataUrl = null;
+let currentSongSeed = -1;
+function pushCurrentToPastSongs() {
+    if (currentSongDataUrl) {
+        addSongEntry(currentSongDataUrl, currentSongSeed);
+        currentSongDataUrl = null;
+        deleteCurrentSongFromDB();
+        const rs = $("#result-section");
+        if (rs)
+            rs.style.display = "none";
+    }
+}
 async function generate() {
     clearPolling();
+    pushCurrentToPastSongs();
     const body = readForm();
     const btn = $("#gen-btn");
     btn.disabled = true;
@@ -526,6 +574,7 @@ async function generate() {
 }
 async function generateLoop() {
     clearPolling();
+    pushCurrentToPastSongs();
     const body = {
         ...readForm(),
         bpm: num("#loop-bpm"),
@@ -569,7 +618,11 @@ function startPolling(sessionId) {
             else if (r.status === "completed") {
                 progressLabel.textContent = `completed (${r.progress}%)`;
                 if (r.audio_data) {
-                    resultAudio.src = `data:audio/wav;base64,${r.audio_data}`;
+                    const dataUrl = `data:audio/wav;base64,${r.audio_data}`;
+                    currentSongDataUrl = dataUrl;
+                    currentSongSeed = r.meta?.seed ?? -1;
+                    saveCurrentSongToDB(dataUrl, currentSongSeed);
+                    resultAudio.src = dataUrl;
                     resultSection.style.display = "block";
                 }
                 const metaParts = [];
@@ -617,6 +670,199 @@ function showError(msg) {
     const el = $("#error-msg");
     if (el)
         el.textContent = msg;
+}
+// ─── IndexedDB persistence ───────────────────────────────────────────────────
+const DB_NAME = "sa3web";
+const DB_STORE = "songs";
+const DB_VERSION = 1;
+const CURRENT_SONG_ID = "_current";
+function openDB() {
+    return new Promise((resolve, reject) => {
+        const req = indexedDB.open(DB_NAME, DB_VERSION);
+        req.onupgradeneeded = () => {
+            const db = req.result;
+            if (!db.objectStoreNames.contains(DB_STORE)) {
+                db.createObjectStore(DB_STORE, { keyPath: "id" });
+            }
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+    });
+}
+async function loadSongsFromDB() {
+    try {
+        const db = await openDB();
+        const tx = db.transaction(DB_STORE, "readonly");
+        const store = tx.objectStore(DB_STORE);
+        const all = store.getAll();
+        all.onsuccess = () => {
+            pastSongs = all.result
+                .filter((e) => e.id !== CURRENT_SONG_ID)
+                .sort((a, b) => b.timestamp - a.timestamp);
+            renderPastSongs();
+        };
+    }
+    catch { /* DB unavailable — start empty */ }
+}
+async function saveSongToDB(entry) {
+    try {
+        const db = await openDB();
+        const tx = db.transaction(DB_STORE, "readwrite");
+        tx.objectStore(DB_STORE).put(entry);
+    }
+    catch { /* silently fail */ }
+}
+async function deleteSongFromDB(id) {
+    try {
+        const db = await openDB();
+        const tx = db.transaction(DB_STORE, "readwrite");
+        tx.objectStore(DB_STORE).delete(id);
+    }
+    catch { /* silently fail */ }
+}
+async function saveCurrentSongToDB(dataUrl, seed) {
+    try {
+        const db = await openDB();
+        const tx = db.transaction(DB_STORE, "readwrite");
+        tx.objectStore(DB_STORE).put({ id: CURRENT_SONG_ID, dataUrl, seed, ts: Date.now() });
+    }
+    catch { /* silently fail */ }
+}
+async function deleteCurrentSongFromDB() {
+    try {
+        const db = await openDB();
+        const tx = db.transaction(DB_STORE, "readwrite");
+        tx.objectStore(DB_STORE).delete(CURRENT_SONG_ID);
+    }
+    catch { /* silently fail */ }
+}
+async function loadCurrentSongFromDB() {
+    try {
+        const db = await openDB();
+        const tx = db.transaction(DB_STORE, "readonly");
+        const store = tx.objectStore(DB_STORE);
+        const req = store.get(CURRENT_SONG_ID);
+        req.onsuccess = () => {
+            const entry = req.result;
+            if (entry?.dataUrl) {
+                currentSongDataUrl = entry.dataUrl;
+                currentSongSeed = entry.seed;
+                const audio = $("#result-audio");
+                const section = $("#result-section");
+                if (audio && section) {
+                    audio.src = entry.dataUrl;
+                    section.style.display = "block";
+                }
+            }
+        };
+    }
+    catch { /* silently fail */ }
+}
+// ─── Past Songs ──────────────────────────────────────────────────────────────
+function addSongEntry(audioData, seed) {
+    const now = new Date();
+    const ts = now.getFullYear().toString() +
+        String(now.getMonth() + 1).padStart(2, "0") +
+        String(now.getDate()).padStart(2, "0") + "-" +
+        String(now.getHours()).padStart(2, "0") +
+        String(now.getMinutes()).padStart(2, "0") +
+        String(now.getSeconds()).padStart(2, "0");
+    const name = "Song-" + ts;
+    const entry = {
+        id: "song_" + now.getTime(),
+        name,
+        timestamp: now.getTime(),
+        audioData,
+        seed,
+        config: readFormAsConfig(),
+    };
+    pastSongs.unshift(entry);
+    renderPastSongs();
+    saveSongToDB(entry);
+}
+function deleteSongEntry(id) {
+    pastSongs = pastSongs.filter((s) => s.id !== id);
+    renderPastSongs();
+    deleteSongFromDB(id);
+}
+function deleteCurrentSong() {
+    currentSongDataUrl = null;
+    deleteCurrentSongFromDB();
+    const rs = $("#result-section");
+    if (rs)
+        rs.style.display = "none";
+    const audio = $("#result-audio");
+    if (audio)
+        audio.src = "";
+}
+function clearAllSongs() {
+    if (!pastSongs.length)
+        return;
+    if (!confirm("Delete all past songs? This cannot be undone."))
+        return;
+    const ids = pastSongs.map((s) => s.id);
+    pastSongs = [];
+    renderPastSongs();
+    for (const id of ids)
+        deleteSongFromDB(id);
+}
+function renderPastSongs() {
+    const container = $("#past-songs");
+    const count = $("#past-count");
+    if (!container)
+        return;
+    container.innerHTML = "";
+    if (count)
+        count.textContent = String(pastSongs.length);
+    for (const song of pastSongs) {
+        const div = document.createElement("div");
+        div.className = "song-entry";
+        const nameSpan = document.createElement("span");
+        nameSpan.className = "song-name";
+        nameSpan.textContent = song.name;
+        const audio = document.createElement("audio");
+        audio.src = song.audioData;
+        audio.controls = true;
+        const paramsSpan = document.createElement("span");
+        paramsSpan.className = "song-params";
+        const p = song.config;
+        paramsSpan.textContent =
+            `prompt: "${p.prompt.length > 40 ? p.prompt.slice(0, 40) + "…" : p.prompt}" · ` +
+                `${p.dist_shift} · steps:${p.steps} · cfg:${p.cfg_scale} · seed:${song.seed}`;
+        const actions = document.createElement("div");
+        actions.className = "song-actions";
+        const loadBtn = document.createElement("button");
+        loadBtn.className = "small";
+        loadBtn.textContent = "📋";
+        loadBtn.title = "Load parameters";
+        loadBtn.addEventListener("click", () => {
+            song.config.version = 1;
+            applyConfig(song.config);
+        });
+        const dlBtn = document.createElement("button");
+        dlBtn.className = "small";
+        dlBtn.textContent = "⬇";
+        dlBtn.title = "Download WAV";
+        dlBtn.addEventListener("click", () => {
+            const a = document.createElement("a");
+            a.href = song.audioData;
+            a.download = song.name + ".wav";
+            a.click();
+        });
+        const delBtn = document.createElement("button");
+        delBtn.className = "small danger";
+        delBtn.textContent = "✕";
+        delBtn.title = "Delete";
+        delBtn.addEventListener("click", () => deleteSongEntry(song.id));
+        actions.appendChild(loadBtn);
+        actions.appendChild(dlBtn);
+        actions.appendChild(delBtn);
+        div.appendChild(nameSpan);
+        div.appendChild(audio);
+        div.appendChild(paramsSpan);
+        div.appendChild(actions);
+        container.appendChild(div);
+    }
 }
 function readFormAsConfig() {
     const dsParams = [
@@ -776,20 +1022,55 @@ function setupCollapsibles() {
         });
     }
 }
+// ─── Theme toggle ────────────────────────────────────────────────────────────
+function toggleTheme() {
+    const html = document.documentElement;
+    const isLight = html.getAttribute("data-theme") === "light";
+    if (isLight) {
+        html.removeAttribute("data-theme");
+        localStorage.setItem("theme", "dark");
+    }
+    else {
+        html.setAttribute("data-theme", "light");
+        localStorage.setItem("theme", "light");
+    }
+    updateThemeBtn();
+}
+function updateThemeBtn() {
+    const btn = $("#theme-btn");
+    if (!btn)
+        return;
+    const isLight = document.documentElement.getAttribute("data-theme") === "light";
+    btn.textContent = isLight ? "🌙" : "☀️";
+}
+function initTheme() {
+    const saved = localStorage.getItem("theme");
+    if (saved === "light") {
+        document.documentElement.setAttribute("data-theme", "light");
+    }
+    updateThemeBtn();
+}
 // ─── Init ───────────────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
     setupCollapsibles();
+    initTheme();
     // Sync range sliders with their number companions
     syncSliderToNum("#duration", "#duration-num");
     syncSliderToNum("#steps", "#steps-num");
     syncSliderToNum("#duration-padding", "#duration-padding-num");
     // Dist-shift defaults
     onDistShiftChange();
+    // Load past songs and current song from IndexedDB
+    loadSongsFromDB();
+    loadCurrentSongFromDB();
     // Event listeners
     $("#gen-btn").addEventListener("click", generate);
     $("#loop-btn").addEventListener("click", generateLoop);
     $("#lora-add-btn").addEventListener("click", addLora);
     $("#dist-shift").addEventListener("change", onDistShiftChange);
+    $("#delete-current-btn").addEventListener("click", deleteCurrentSong);
+    $("#clear-all-btn").addEventListener("click", clearAllSongs);
+    $("#theme-btn").addEventListener("click", toggleTheme);
     $("#save-config-btn").addEventListener("click", saveConfig);
     $("#load-config-btn").addEventListener("click", loadConfig);
     $("#load-config-input").addEventListener("change", onConfigFileSelected);

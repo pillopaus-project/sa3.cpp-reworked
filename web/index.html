@@ -47,6 +47,9 @@
   button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; font-weight: 600; }
   button.primary:hover { background: #388bfd; }
   button.primary:disabled { opacity: .5; cursor: not-allowed; }
+  button.loop { background: #6e40c9; border-color: #6e40c9; color: #fff; font-weight: 600; }
+  button.loop:hover { background: #7c4dff; }
+  button.loop:disabled { opacity: .5; cursor: not-allowed; }
   button.small { padding: 2px 8px; font-size: 0.78rem; }
   button.danger { border-color: var(--red); color: var(--red); }
   button.danger:hover { background: var(--red); color: #fff; }
@@ -81,6 +84,27 @@
   #error-msg { color: var(--red); font-size: 0.85rem; margin-top: 6px; min-height: 1.2em; }
   .small-note { font-size: 0.75rem; color: var(--muted); margin-top: 2px; }
   hr { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
+  .song-entry { display:flex; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid var(--border); }
+  .song-entry:last-child { border-bottom:none; }
+  .song-entry .song-name { flex:0 0 auto; font-size:0.85rem; font-weight:500; min-width:150px; }
+  .song-entry audio { height:32px; flex:0 0 200px; }
+  .song-entry .song-params { flex:1; font-size:0.75rem; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+  .song-entry .song-actions { display:flex; gap:3px; flex:0 0 auto; }
+  #past-songs { max-height:none; }
+  #past-songs:empty::after { content:"No past songs yet"; display:block; font-size:0.82rem; color:var(--muted); padding:12px 0; }
+  [data-theme="light"] {
+    --bg: #eef0f2; --surface: #ffffff; --border: #d0d7de;
+    --text: #1f2328; --muted: #656d76; --accent: #0969da;
+    --green: #1a7f37; --red: #cf222e; --orange: #bf8700;
+  }
+  [data-theme="light"] input, [data-theme="light"] select, [data-theme="light"] textarea { background: #ffffff; }
+  [data-theme="light"] button { background: #f6f8fa; }
+  [data-theme="light"] button:hover { background: #eaeef2; }
+  [data-theme="light"] button.primary { background: #0969da; border-color: #0969da; }
+  [data-theme="light"] button.loop { background: #8250df; border-color: #8250df; }
+  [data-theme="light"] button.loop:hover { background: #9855ff; }
+  [data-theme="light"] .lora-tag { background: #eef1f6; border-color: #d0d7de; }
+  [data-theme="light"] .lora-tag .lora-str { color: #656d76; }
   @media (max-width: 600px) {
     .row { flex-direction: column; }
     .col { min-width: 100%; }
@@ -99,6 +123,7 @@
     <span id="model-info" style="display:none;font-size:0.82rem;color:var(--muted)"></span>
   </div>
   <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+    <button id="theme-btn" class="small" title="Toggle dark/light theme" style="font-size:1.1rem;line-height:1;padding:4px 10px">☀️</button>
     <button id="save-config-btn" class="small" title="Save current config">💾 Save</button>
     <button id="load-config-btn" class="small" title="Load config file">📂 Load</button>
     <span id="config-filename" style="font-size:0.78rem;color:var(--muted);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
@@ -265,7 +290,7 @@
   <div class="row gapped">
     <div class="col"><button id="gen-btn" class="primary" style="width:100%">🎵 Generate</button></div>
     <div class="col">
-      <button id="loop-btn" style="width:100%">🔄 Generate Loop</button>
+      <button id="loop-btn" class="loop" style="width:100%">🔄 Generate Loop</button>
     </div>
   </div>
   <div class="row gapped" style="margin-top:8px">
@@ -284,10 +309,19 @@
   </div>
   <hr>
   <div id="result-section" style="display:none">
-    <audio id="result-audio" controls></audio>
+    <div style="display:flex;align-items:center;gap:8px">
+      <audio id="result-audio" controls style="flex:1;min-width:0"></audio>
+      <button id="delete-current-btn" class="small danger" style="flex:none">✕ Delete</button>
+    </div>
     <div id="seed-info"></div>
   </div>
 </div>
+
+<!-- ─── Past Songs ──────────────────────────────────────────── -->
+<h2 style="display:flex;align-items:center;gap:8px">Past Songs <span id="past-count" class="badge">0</span>
+  <button id="clear-all-btn" class="small danger" style="margin-left:auto">🗑 Clear All</button>
+</h2>
+<div id="past-songs" class="card"></div>
 
 <script src="app.js"></script>
 </body>

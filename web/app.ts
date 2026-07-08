@@ -115,6 +115,16 @@ const server = { host: "127.0.0.1", port: 8006 };
 let loraList: LoraEntry[] = [];
 let activeLoras: LoraSpec[] = [];
 
+interface SongEntry {
+  id: string;
+  name: string;
+  timestamp: number;
+  audioData: string;
+  seed: number;
+  config: UiConfig;
+}
+let pastSongs: SongEntry[] = [];
+
 // ─── DOM helpers ────────────────────────────────────────────────────────────
 
 const $ = <T extends HTMLElement = HTMLElement>(s: string): T =>
@@ -318,8 +328,22 @@ function onDistShiftChange(): void {
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
+let currentSongDataUrl: string | null = null;
+let currentSongSeed = -1;
+
+function pushCurrentToPastSongs(): void {
+  if (currentSongDataUrl) {
+    addSongEntry(currentSongDataUrl, currentSongSeed);
+    currentSongDataUrl = null;
+    deleteCurrentSongFromDB();
+    const rs = $("#result-section");
+    if (rs) rs.style.display = "none";
+  }
+}
+
 async function generate(): Promise<void> {
   clearPolling();
+  pushCurrentToPastSongs();
   const body = readForm();
   const btn = $<HTMLButtonElement>("#gen-btn");
   btn.disabled = true;
@@ -336,6 +360,7 @@ async function generate(): Promise<void> {
 
 async function generateLoop(): Promise<void> {
   clearPolling();
+  pushCurrentToPastSongs();
   const body: LoopGenerateRequest = {
     ...readForm(),
     bpm: num("#loop-bpm"),
@@ -380,7 +405,11 @@ function startPolling(sessionId: string): void {
       } else if (r.status === "completed") {
         progressLabel.textContent = `completed (${r.progress}%)`;
         if (r.audio_data) {
-          resultAudio.src = `data:audio/wav;base64,${r.audio_data}`;
+          const dataUrl = `data:audio/wav;base64,${r.audio_data}`;
+          currentSongDataUrl = dataUrl;
+          currentSongSeed = r.meta?.seed ?? -1;
+          saveCurrentSongToDB(dataUrl, currentSongSeed);
+          resultAudio.src = dataUrl;
           resultSection.style.display = "block";
         }
         const metaParts: string[] = [];
@@ -425,6 +454,210 @@ function enableButtons(): void {
 function showError(msg: string): void {
   const el = $("#error-msg");
   if (el) el.textContent = msg;
+}
+
+// ─── IndexedDB persistence ───────────────────────────────────────────────────
+
+const DB_NAME = "sa3web";
+const DB_STORE = "songs";
+const DB_VERSION = 1;
+const CURRENT_SONG_ID = "_current";
+
+function openDB(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(DB_STORE)) {
+        db.createObjectStore(DB_STORE, { keyPath: "id" });
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function loadSongsFromDB(): Promise<void> {
+  try {
+    const db = await openDB();
+    const tx = db.transaction(DB_STORE, "readonly");
+    const store = tx.objectStore(DB_STORE);
+    const all = store.getAll();
+    all.onsuccess = () => {
+      pastSongs = (all.result as SongEntry[])
+        .filter((e) => e.id !== CURRENT_SONG_ID)
+        .sort((a, b) => b.timestamp - a.timestamp);
+      renderPastSongs();
+    };
+  } catch { /* DB unavailable — start empty */ }
+}
+
+async function saveSongToDB(entry: SongEntry): Promise<void> {
+  try {
+    const db = await openDB();
+    const tx = db.transaction(DB_STORE, "readwrite");
+    tx.objectStore(DB_STORE).put(entry);
+  } catch { /* silently fail */ }
+}
+
+async function deleteSongFromDB(id: string): Promise<void> {
+  try {
+    const db = await openDB();
+    const tx = db.transaction(DB_STORE, "readwrite");
+    tx.objectStore(DB_STORE).delete(id);
+  } catch { /* silently fail */ }
+}
+
+async function saveCurrentSongToDB(dataUrl: string, seed: number): Promise<void> {
+  try {
+    const db = await openDB();
+    const tx = db.transaction(DB_STORE, "readwrite");
+    tx.objectStore(DB_STORE).put({ id: CURRENT_SONG_ID, dataUrl, seed, ts: Date.now() });
+  } catch { /* silently fail */ }
+}
+
+async function deleteCurrentSongFromDB(): Promise<void> {
+  try {
+    const db = await openDB();
+    const tx = db.transaction(DB_STORE, "readwrite");
+    tx.objectStore(DB_STORE).delete(CURRENT_SONG_ID);
+  } catch { /* silently fail */ }
+}
+
+async function loadCurrentSongFromDB(): Promise<void> {
+  try {
+    const db = await openDB();
+    const tx = db.transaction(DB_STORE, "readonly");
+    const store = tx.objectStore(DB_STORE);
+    const req = store.get(CURRENT_SONG_ID);
+    req.onsuccess = () => {
+      const entry = req.result as { dataUrl: string; seed: number } | undefined;
+      if (entry?.dataUrl) {
+        currentSongDataUrl = entry.dataUrl;
+        currentSongSeed = entry.seed;
+        const audio = $<HTMLAudioElement>("#result-audio");
+        const section = $("#result-section");
+        if (audio && section) {
+          audio.src = entry.dataUrl;
+          section.style.display = "block";
+        }
+      }
+    };
+  } catch { /* silently fail */ }
+}
+
+// ─── Past Songs ──────────────────────────────────────────────────────────────
+
+function addSongEntry(audioData: string, seed: number): void {
+  const now = new Date();
+  const ts = now.getFullYear().toString() +
+    String(now.getMonth() + 1).padStart(2, "0") +
+    String(now.getDate()).padStart(2, "0") + "-" +
+    String(now.getHours()).padStart(2, "0") +
+    String(now.getMinutes()).padStart(2, "0") +
+    String(now.getSeconds()).padStart(2, "0");
+  const name = "Song-" + ts;
+  const entry: SongEntry = {
+    id: "song_" + now.getTime(),
+    name,
+    timestamp: now.getTime(),
+    audioData,
+    seed,
+    config: readFormAsConfig(),
+  };
+  pastSongs.unshift(entry);
+  renderPastSongs();
+  saveSongToDB(entry);
+}
+
+function deleteSongEntry(id: string): void {
+  pastSongs = pastSongs.filter((s) => s.id !== id);
+  renderPastSongs();
+  deleteSongFromDB(id);
+}
+
+function deleteCurrentSong(): void {
+  currentSongDataUrl = null;
+  deleteCurrentSongFromDB();
+  const rs = $("#result-section");
+  if (rs) rs.style.display = "none";
+  const audio = $<HTMLAudioElement>("#result-audio");
+  if (audio) audio.src = "";
+}
+
+function clearAllSongs(): void {
+  if (!pastSongs.length) return;
+  if (!confirm("Delete all past songs? This cannot be undone.")) return;
+  const ids = pastSongs.map((s) => s.id);
+  pastSongs = [];
+  renderPastSongs();
+  for (const id of ids) deleteSongFromDB(id);
+}
+
+function renderPastSongs(): void {
+  const container = $("#past-songs");
+  const count = $("#past-count");
+  if (!container) return;
+  container.innerHTML = "";
+  if (count) count.textContent = String(pastSongs.length);
+  for (const song of pastSongs) {
+    const div = document.createElement("div");
+    div.className = "song-entry";
+
+    const nameSpan = document.createElement("span");
+    nameSpan.className = "song-name";
+    nameSpan.textContent = song.name;
+
+    const audio = document.createElement("audio");
+    audio.src = song.audioData;
+    audio.controls = true;
+
+    const paramsSpan = document.createElement("span");
+    paramsSpan.className = "song-params";
+    const p = song.config;
+    paramsSpan.textContent =
+      `prompt: "${p.prompt.length > 40 ? p.prompt.slice(0, 40) + "…" : p.prompt}" · ` +
+      `${p.dist_shift} · steps:${p.steps} · cfg:${p.cfg_scale} · seed:${song.seed}`;
+
+    const actions = document.createElement("div");
+    actions.className = "song-actions";
+
+    const loadBtn = document.createElement("button");
+    loadBtn.className = "small";
+    loadBtn.textContent = "📋";
+    loadBtn.title = "Load parameters";
+    loadBtn.addEventListener("click", () => {
+      song.config.version = 1;
+      applyConfig(song.config);
+    });
+
+    const dlBtn = document.createElement("button");
+    dlBtn.className = "small";
+    dlBtn.textContent = "⬇";
+    dlBtn.title = "Download WAV";
+    dlBtn.addEventListener("click", () => {
+      const a = document.createElement("a");
+      a.href = song.audioData;
+      a.download = song.name + ".wav";
+      a.click();
+    });
+
+    const delBtn = document.createElement("button");
+    delBtn.className = "small danger";
+    delBtn.textContent = "✕";
+    delBtn.title = "Delete";
+    delBtn.addEventListener("click", () => deleteSongEntry(song.id));
+
+    actions.appendChild(loadBtn);
+    actions.appendChild(dlBtn);
+    actions.appendChild(delBtn);
+
+    div.appendChild(nameSpan);
+    div.appendChild(audio);
+    div.appendChild(paramsSpan);
+    div.appendChild(actions);
+    container.appendChild(div);
+  }
 }
 
 // ─── Config save / load ──────────────────────────────────────────────────────
@@ -626,10 +859,41 @@ function setupCollapsibles(): void {
   }
 }
 
+// ─── Theme toggle ────────────────────────────────────────────────────────────
+
+function toggleTheme(): void {
+  const html = document.documentElement;
+  const isLight = html.getAttribute("data-theme") === "light";
+  if (isLight) {
+    html.removeAttribute("data-theme");
+    localStorage.setItem("theme", "dark");
+  } else {
+    html.setAttribute("data-theme", "light");
+    localStorage.setItem("theme", "light");
+  }
+  updateThemeBtn();
+}
+
+function updateThemeBtn(): void {
+  const btn = $("#theme-btn");
+  if (!btn) return;
+  const isLight = document.documentElement.getAttribute("data-theme") === "light";
+  btn.textContent = isLight ? "🌙" : "☀️";
+}
+
+function initTheme(): void {
+  const saved = localStorage.getItem("theme");
+  if (saved === "light") {
+    document.documentElement.setAttribute("data-theme", "light");
+  }
+  updateThemeBtn();
+}
+
 // ─── Init ───────────────────────────────────────────────────────────────────
 
 document.addEventListener("DOMContentLoaded", () => {
   setupCollapsibles();
+  initTheme();
 
   // Sync range sliders with their number companions
   syncSliderToNum("#duration", "#duration-num");
@@ -639,11 +903,18 @@ document.addEventListener("DOMContentLoaded", () => {
   // Dist-shift defaults
   onDistShiftChange();
 
+  // Load past songs and current song from IndexedDB
+  loadSongsFromDB();
+  loadCurrentSongFromDB();
+
   // Event listeners
   $<HTMLButtonElement>("#gen-btn").addEventListener("click", generate);
   $<HTMLButtonElement>("#loop-btn").addEventListener("click", generateLoop);
   $<HTMLButtonElement>("#lora-add-btn").addEventListener("click", addLora);
   $<HTMLSelectElement>("#dist-shift").addEventListener("change", onDistShiftChange);
+  $<HTMLButtonElement>("#delete-current-btn").addEventListener("click", deleteCurrentSong);
+  $<HTMLButtonElement>("#clear-all-btn").addEventListener("click", clearAllSongs);
+  $<HTMLButtonElement>("#theme-btn").addEventListener("click", toggleTheme);
   $<HTMLButtonElement>("#save-config-btn").addEventListener("click", saveConfig);
   $<HTMLButtonElement>("#load-config-btn").addEventListener("click", loadConfig);
   $<HTMLInputElement>("#load-config-input").addEventListener("change", onConfigFileSelected);
