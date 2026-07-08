@@ -196,10 +196,7 @@ function onDistShiftChange() {
         const label = document.querySelector(`label[for="dsp${i + 1}"]`);
         if (label)
             label.textContent = labels[i];
-        // Only reset to defaults if the user hasn't manually edited this param
-        if (input.dataset.userEdited === undefined) {
-            input.value = String(defaults[i]);
-        }
+        input.value = String(defaults[i]);
         input.disabled = type === "None";
     }
 }
@@ -381,7 +378,6 @@ function applyConfig(cfg) {
         for (let i = 0; i < 4; i++) {
             const inp = $(`#dsp${i + 1}`);
             inp.value = String(cfg.dist_shift_params[i]);
-            inp.dataset.userEdited = "true";
         }
     }
     onDistShiftChange();
@@ -491,12 +487,6 @@ document.addEventListener("DOMContentLoaded", () => {
     $("#save-config-btn").addEventListener("click", saveConfig);
     $("#load-config-btn").addEventListener("click", loadConfig);
     $("#load-config-input").addEventListener("change", onConfigFileSelected);
-    // Mark dist-shift params as user-edited on first input
-    for (let i = 1; i <= 4; i++) {
-        const inp = $(`#dsp${i}`);
-        inp.addEventListener("input", () => { inp.dataset.userEdited = "true"; });
-        inp.addEventListener("change", () => { inp.dataset.userEdited = "true"; });
-    }
     // Ctrl+Enter (or Cmd+Enter) triggers generate
     document.addEventListener("keydown", (e) => {
         if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
