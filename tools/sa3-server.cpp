@@ -13,6 +13,7 @@
 // The Pipeline carries the reusable primitives (incl. GenParams::on_progress); a synchronous or SSE
 // transport is left to real apps — this server only demonstrates the poll_status pattern.
 #include "sa3_pipeline.h"
+#include "embedded_web.h"
 #include "env.h"
 #include "wav.h"
 
@@ -1006,6 +1007,14 @@ int main(int argc, char** argv) {
             body += ",\"error\":\"" + json_escape(error) + "\"";
         body += "}";
         res.set_content(body, "application/json");
+    });
+
+    // GET /: embedded web UI (generated from web/ by tools/gen_embedded_web.py).
+    svr.Get("/", [](const httplib::Request&, httplib::Response& res) {
+        res.set_content(embedded_web::index_html, "text/html");
+    });
+    svr.Get("/app.js", [](const httplib::Request&, httplib::Response& res) {
+        res.set_content(embedded_web::app_js, "application/javascript");
     });
 
     fprintf(stderr, "[sa3-server] http://%s:%d  model=%s/%s  models=%s  adapters=%s  source_loras=%s  prompts=%s  (async /poll_status; frugal default)\n",
