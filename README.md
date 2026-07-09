@@ -1,5 +1,13 @@
 # stable-audio-3 in c++
 
+Web Interface actual status :
+<img width="2962" height="1662" alt="1-ok" src="https://github.com/user-attachments/assets/70523fc0-4db5-47e1-b90c-41d73e6ec39d" />
+
+<img width="2962" height="1662" alt="2-ok" src="https://github.com/user-attachments/assets/184581b5-30cd-4055-a93b-1446d0518b42" />
+
+<img width="2962" height="1662" alt="3-ok" src="https://github.com/user-attachments/assets/c4740bc7-18bf-4daa-8f1e-2a7f27f51a2c" />
+
+
 trying to make this as composable and extensible as i can without over-engineering it too much. my hope is that this might eventually replace the sa3 backend i already use in [gary4local](https://github.com/betweentwomidnights/gary-localhost-installer), and start unifying that application for mac/pc. 
 
 it might also just allow us to embed sa3 directly inside a JUCE/iPlug2 project. see [docs/EMBEDDING.md](docs/EMBEDDING.md).
