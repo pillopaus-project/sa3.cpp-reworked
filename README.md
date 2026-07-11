@@ -1,4 +1,9 @@
 # stable-audio-3 in c++
+Interface update : 
+
+<img width="1649" height="1336" alt="Screenshot from 2026-07-11 11-54-01" src="https://github.com/user-attachments/assets/c1a6679d-cb85-4fc9-a19c-3b78ddcfea64" />
+
+
 
 Web Interface actual status :
 
