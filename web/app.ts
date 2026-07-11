@@ -93,6 +93,11 @@ interface GenerateResponse {
   gen_duration?: number;
 }
 
+interface AudioInResponse {
+  success: boolean;
+  files: string[];
+}
+
 // ─── Dist-shift default profiles ───────────────────────────────────────────
 
 const DIST_SHIFT_DEFAULTS: Record<string, [number, number, number, number]> = {
@@ -114,6 +119,7 @@ const DIST_SHIFT_LABELS: Record<string, [string, string, string, string]> = {
 const server = { host: "127.0.0.1", port: 8006 };
 let loraList: LoraEntry[] = [];
 let activeLoras: LoraSpec[] = [];
+let currentSessionId: string | null = null;
 
 interface SongEntry {
   id: string;
@@ -250,6 +256,7 @@ async function checkHealth(): Promise<void> {
     modelInfo.textContent = `${h.model} / ${h.encoding} ${h.loaded ? "(loaded)" : "(unloaded)"}`;
     modelInfo.style.display = "";
     loadLoras();
+    fetchAudioFiles();
   } catch {
     statusEl.textContent = "✗ Server unreachable";
     statusEl.className = "err";
@@ -309,6 +316,71 @@ function renderActiveLoras(): void {
   }
 }
 
+// ─── Audio-in file management ─────────────────────────────────────────────
+
+async function fetchAudioFiles(): Promise<void> {
+  try {
+    const r = await apiGet<AudioInResponse>("/audio-in");
+    const sel = $<HTMLSelectElement>("#init-audio-select");
+    const current = sel.value;
+    sel.innerHTML = '<option value="">-- none (text-to-music) --</option>';
+    for (const f of r.files) {
+      const opt = document.createElement("option");
+      opt.value = f;
+      opt.textContent = f.replace(/\.[^.]+$/, "");
+      sel.appendChild(opt);
+    }
+    // restore previous selection if still present
+    if (current && r.files.includes(current)) {
+      sel.value = current;
+    } else {
+      setVal("#init-path", "");
+    }
+  } catch {
+    // server not connected yet
+  }
+}
+
+function onInitAudioSelectChange(): void {
+  const sel = $<HTMLSelectElement>("#init-audio-select");
+  const filename = sel.value;
+  setVal("#init-path", filename ? `./audio-in/${filename}` : "");
+}
+
+async function uploadAudioFile(): Promise<void> {
+  const input = $<HTMLInputElement>("#init-audio-upload");
+  const file = input.files?.[0];
+  if (!file) {
+    showError("Select a WAV file first");
+    return;
+  }
+  const btn = $<HTMLButtonElement>("#init-audio-upload-btn");
+  btn.disabled = true;
+  btn.textContent = "Uploading…";
+  showError("");
+  try {
+    const formData = new FormData();
+    formData.append("file", file);
+    const r = await fetch(`${apiBase()}/upload`, { method: "POST", body: formData });
+    if (!r.ok) throw new Error(`HTTP ${r.status}: ${r.statusText}`);
+    const result = await r.json() as { success: boolean; filename?: string; error?: string };
+    if (!result.success) throw new Error(result.error || "Upload failed");
+    // select the uploaded file in the dropdown
+    await fetchAudioFiles();
+    const sel = $<HTMLSelectElement>("#init-audio-select");
+    if (result.filename) {
+      sel.value = result.filename;
+      onInitAudioSelectChange();
+    }
+    input.value = "";
+  } catch (e: unknown) {
+    showError(e instanceof Error ? e.message : "Upload failed");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Upload";
+  }
+}
+
 // ─── Dist-shift parameter defaults ──────────────────────────────────────────
 
 function onDistShiftChange(): void {
@@ -342,23 +414,27 @@ function pushCurrentToPastSongs(): void {
 }
 
 async function generate(): Promise<void> {
+  if (currentSessionId) {
+    cancelJob();
+    return;
+  }
   clearPolling();
   pushCurrentToPastSongs();
   const body = readForm();
-  const btn = $<HTMLButtonElement>("#gen-btn");
-  btn.disabled = true;
-  btn.textContent = "Generating…";
   try {
     const r = await apiPost<GenerateResponse>("/generate", body);
-    startPolling(r.session_id);
+    startPolling(r.session_id, "gen");
   } catch (e: unknown) {
     showError(e instanceof Error ? e.message : "Request failed");
-    btn.disabled = false;
-    btn.textContent = "Generate";
+    enableButtons();
   }
 }
 
 async function generateLoop(): Promise<void> {
+  if (currentSessionId) {
+    cancelJob();
+    return;
+  }
   clearPolling();
   pushCurrentToPastSongs();
   const body: LoopGenerateRequest = {
@@ -366,32 +442,30 @@ async function generateLoop(): Promise<void> {
     bpm: num("#loop-bpm"),
     bars: int("#loop-bars"),
   };
-  const btn = $<HTMLButtonElement>("#loop-btn");
-  btn.disabled = true;
-  btn.textContent = "Generating loop…";
   try {
     const r = await apiPost<GenerateResponse>("/generate/loop", body);
-    startPolling(r.session_id);
+    startPolling(r.session_id, "loop");
   } catch (e: unknown) {
     showError(e instanceof Error ? e.message : "Request failed");
-    btn.disabled = false;
-    btn.textContent = "Generate Loop";
+    enableButtons();
   }
 }
 
-function startPolling(sessionId: string): void {
+function startPolling(sessionId: string, which: "gen" | "loop"): void {
   const progressBar = $("#progress-bar") as HTMLDivElement;
   const progressLabel = $("#progress-label");
   const resultAudio = $<HTMLAudioElement>("#result-audio");
   const resultSection = $("#result-section");
   const seedInfo = $("#seed-info");
 
+  currentSessionId = sessionId;
   progressBar.style.width = "0%";
   progressLabel.textContent = "queued";
   resultSection.style.display = "none";
   resultAudio.src = "";
   seedInfo.textContent = "";
   showError("");
+  showCancelButton(which);
 
   pollTimer = setInterval(async () => {
     try {
@@ -400,7 +474,8 @@ function startPolling(sessionId: string): void {
 
       if (r.status === "queued") {
         progressLabel.textContent = "queued…";
-      } else if (r.status === "generating" || r.status === "encoding") {
+      } else if (r.status === "generating" || r.status === "encoding"
+               || r.status === "decoding" || r.status === "finalizing") {
         progressLabel.textContent = `${r.status} step ${r.step}/${r.total_steps} (${r.progress}%)`;
       } else if (r.status === "completed") {
         progressLabel.textContent = `completed (${r.progress}%)`;
@@ -426,6 +501,10 @@ function startPolling(sessionId: string): void {
         progressLabel.textContent = `failed: ${r.error || "unknown error"}`;
         clearPolling();
         enableButtons();
+      } else if (r.status === "cancelled") {
+        progressLabel.textContent = "cancelled by user";
+        clearPolling();
+        enableButtons();
       }
     } catch {
       progressLabel.textContent = "poll error";
@@ -443,12 +522,38 @@ function clearPolling(): void {
 }
 
 function enableButtons(): void {
+  currentSessionId = null;
   const genBtn = $<HTMLButtonElement>("#gen-btn");
   genBtn.disabled = false;
-  genBtn.textContent = "Generate";
+  genBtn.textContent = "🎵 Generate";
+  genBtn.className = "primary";
   const loopBtn = $<HTMLButtonElement>("#loop-btn");
   loopBtn.disabled = false;
-  loopBtn.textContent = "Generate Loop";
+  loopBtn.textContent = "🔄 Generate Loop";
+  loopBtn.className = "loop";
+}
+
+function showCancelButton(which: "gen" | "loop"): void {
+  if (which === "gen") {
+    const genBtn = $<HTMLButtonElement>("#gen-btn");
+    genBtn.disabled = false;
+    genBtn.textContent = "✕ Cancel";
+    genBtn.className = "danger";
+  } else {
+    const loopBtn = $<HTMLButtonElement>("#loop-btn");
+    loopBtn.disabled = false;
+    loopBtn.textContent = "✕ Cancel";
+    loopBtn.className = "danger";
+  }
+}
+
+async function cancelJob(): Promise<void> {
+  if (!currentSessionId) return;
+  try {
+    await apiPost(`/cancel/${currentSessionId}`, {});
+  } catch {
+    // best effort — pipeline will pick up the flag on next check
+  }
 }
 
 function showError(msg: string): void {
@@ -784,6 +889,17 @@ function applyConfig(cfg: UiConfig): void {
   setVal("#limiter-ceiling-db", cfg.limiter_ceiling_db != null ? String(cfg.limiter_ceiling_db) : "");
   setVal("#limiter-knee", cfg.limiter_knee);
   setVal("#init-path", cfg.init_path || "");
+  // restore init audio dropdown from saved path
+  {
+    const sel = $<HTMLSelectElement>("#init-audio-select");
+    const initPath = cfg.init_path || "";
+    const match = initPath.match(/audio-in\/(.+)$/);
+    if (match && sel.querySelector(`option[value="${CSS.escape(match[1])}"]`)) {
+      sel.value = match[1];
+    } else {
+      sel.value = "";
+    }
+  }
   setVal("#init-noise-level", cfg.init_noise_level);
   setVal("#inpaint-start", cfg.inpaint_start);
   setVal("#inpaint-end", cfg.inpaint_end);
@@ -918,6 +1034,11 @@ document.addEventListener("DOMContentLoaded", () => {
   $<HTMLButtonElement>("#save-config-btn").addEventListener("click", saveConfig);
   $<HTMLButtonElement>("#load-config-btn").addEventListener("click", loadConfig);
   $<HTMLInputElement>("#load-config-input").addEventListener("change", onConfigFileSelected);
+
+  // Init audio controls
+  $<HTMLSelectElement>("#init-audio-select").addEventListener("change", onInitAudioSelectChange);
+  $<HTMLButtonElement>("#init-audio-refresh-btn").addEventListener("click", fetchAudioFiles);
+  $<HTMLButtonElement>("#init-audio-upload-btn").addEventListener("click", uploadAudioFile);
 
 
 

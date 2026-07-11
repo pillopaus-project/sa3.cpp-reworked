@@ -19,6 +19,7 @@ const DIST_SHIFT_LABELS = {
 const server = { host: "127.0.0.1", port: 8006 };
 let loraList = [];
 let activeLoras = [];
+let currentSessionId = null;
 let pastSongs = [];
 // ─── DOM helpers ────────────────────────────────────────────────────────────
 const $ = (s) => document.querySelector(s);
@@ -131,6 +132,7 @@ async function checkHealth() {
         modelInfo.textContent = `${h.model} / ${h.encoding} ${h.loaded ? "(loaded)" : "(unloaded)"}`;
         modelInfo.style.display = "";
         loadLoras();
+        fetchAudioFiles();
     }
     catch {
         statusEl.textContent = "✗ Server unreachable";
@@ -187,6 +189,73 @@ function renderActiveLoras() {
         container.appendChild(tag);
     }
 }
+// ─── Audio-in file management ─────────────────────────────────────────────
+async function fetchAudioFiles() {
+    try {
+        const r = await apiGet("/audio-in");
+        const sel = $("#init-audio-select");
+        const current = sel.value;
+        sel.innerHTML = '<option value="">-- none (text-to-music) --</option>';
+        for (const f of r.files) {
+            const opt = document.createElement("option");
+            opt.value = f;
+            opt.textContent = f.replace(/\.[^.]+$/, "");
+            sel.appendChild(opt);
+        }
+        // restore previous selection if still present
+        if (current && r.files.includes(current)) {
+            sel.value = current;
+        }
+        else {
+            setVal("#init-path", "");
+        }
+    }
+    catch {
+        // server not connected yet
+    }
+}
+function onInitAudioSelectChange() {
+    const sel = $("#init-audio-select");
+    const filename = sel.value;
+    setVal("#init-path", filename ? `./audio-in/${filename}` : "");
+}
+async function uploadAudioFile() {
+    const input = $("#init-audio-upload");
+    const file = input.files?.[0];
+    if (!file) {
+        showError("Select a WAV file first");
+        return;
+    }
+    const btn = $("#init-audio-upload-btn");
+    btn.disabled = true;
+    btn.textContent = "Uploading…";
+    showError("");
+    try {
+        const formData = new FormData();
+        formData.append("file", file);
+        const r = await fetch(`${apiBase()}/upload`, { method: "POST", body: formData });
+        if (!r.ok)
+            throw new Error(`HTTP ${r.status}: ${r.statusText}`);
+        const result = await r.json();
+        if (!result.success)
+            throw new Error(result.error || "Upload failed");
+        // select the uploaded file in the dropdown
+        await fetchAudioFiles();
+        const sel = $("#init-audio-select");
+        if (result.filename) {
+            sel.value = result.filename;
+            onInitAudioSelectChange();
+        }
+        input.value = "";
+    }
+    catch (e) {
+        showError(e instanceof Error ? e.message : "Upload failed");
+    }
+    finally {
+        btn.disabled = false;
+        btn.textContent = "Upload";
+    }
+}
 // ─── Dist-shift parameter defaults ──────────────────────────────────────────
 function onDistShiftChange() {
     const type = val("#dist-shift");
@@ -216,23 +285,27 @@ function pushCurrentToPastSongs() {
     }
 }
 async function generate() {
+    if (currentSessionId) {
+        cancelJob();
+        return;
+    }
     clearPolling();
     pushCurrentToPastSongs();
     const body = readForm();
-    const btn = $("#gen-btn");
-    btn.disabled = true;
-    btn.textContent = "Generating…";
     try {
         const r = await apiPost("/generate", body);
-        startPolling(r.session_id);
+        startPolling(r.session_id, "gen");
     }
     catch (e) {
         showError(e instanceof Error ? e.message : "Request failed");
-        btn.disabled = false;
-        btn.textContent = "Generate";
+        enableButtons();
     }
 }
 async function generateLoop() {
+    if (currentSessionId) {
+        cancelJob();
+        return;
+    }
     clearPolling();
     pushCurrentToPastSongs();
     const body = {
@@ -240,31 +313,29 @@ async function generateLoop() {
         bpm: num("#loop-bpm"),
         bars: int("#loop-bars"),
     };
-    const btn = $("#loop-btn");
-    btn.disabled = true;
-    btn.textContent = "Generating loop…";
     try {
         const r = await apiPost("/generate/loop", body);
-        startPolling(r.session_id);
+        startPolling(r.session_id, "loop");
     }
     catch (e) {
         showError(e instanceof Error ? e.message : "Request failed");
-        btn.disabled = false;
-        btn.textContent = "Generate Loop";
+        enableButtons();
     }
 }
-function startPolling(sessionId) {
+function startPolling(sessionId, which) {
     const progressBar = $("#progress-bar");
     const progressLabel = $("#progress-label");
     const resultAudio = $("#result-audio");
     const resultSection = $("#result-section");
     const seedInfo = $("#seed-info");
+    currentSessionId = sessionId;
     progressBar.style.width = "0%";
     progressLabel.textContent = "queued";
     resultSection.style.display = "none";
     resultAudio.src = "";
     seedInfo.textContent = "";
     showError("");
+    showCancelButton(which);
     pollTimer = setInterval(async () => {
         try {
             const r = await apiGet(`/poll_status/${sessionId}`);
@@ -272,7 +343,8 @@ function startPolling(sessionId) {
             if (r.status === "queued") {
                 progressLabel.textContent = "queued…";
             }
-            else if (r.status === "generating" || r.status === "encoding") {
+            else if (r.status === "generating" || r.status === "encoding"
+                || r.status === "decoding" || r.status === "finalizing") {
                 progressLabel.textContent = `${r.status} step ${r.step}/${r.total_steps} (${r.progress}%)`;
             }
             else if (r.status === "completed") {
@@ -304,6 +376,11 @@ function startPolling(sessionId) {
                 clearPolling();
                 enableButtons();
             }
+            else if (r.status === "cancelled") {
+                progressLabel.textContent = "cancelled by user";
+                clearPolling();
+                enableButtons();
+            }
         }
         catch {
             progressLabel.textContent = "poll error";
@@ -319,12 +396,39 @@ function clearPolling() {
     }
 }
 function enableButtons() {
+    currentSessionId = null;
     const genBtn = $("#gen-btn");
     genBtn.disabled = false;
-    genBtn.textContent = "Generate";
+    genBtn.textContent = "🎵 Generate";
+    genBtn.className = "primary";
     const loopBtn = $("#loop-btn");
     loopBtn.disabled = false;
-    loopBtn.textContent = "Generate Loop";
+    loopBtn.textContent = "🔄 Generate Loop";
+    loopBtn.className = "loop";
+}
+function showCancelButton(which) {
+    if (which === "gen") {
+        const genBtn = $("#gen-btn");
+        genBtn.disabled = false;
+        genBtn.textContent = "✕ Cancel";
+        genBtn.className = "danger";
+    }
+    else {
+        const loopBtn = $("#loop-btn");
+        loopBtn.disabled = false;
+        loopBtn.textContent = "✕ Cancel";
+        loopBtn.className = "danger";
+    }
+}
+async function cancelJob() {
+    if (!currentSessionId)
+        return;
+    try {
+        await apiPost(`/cancel/${currentSessionId}`, {});
+    }
+    catch {
+        // best effort — pipeline will pick up the flag on next check
+    }
 }
 function showError(msg) {
     const el = $("#error-msg");
@@ -607,6 +711,18 @@ function applyConfig(cfg) {
     setVal("#limiter-ceiling-db", cfg.limiter_ceiling_db != null ? String(cfg.limiter_ceiling_db) : "");
     setVal("#limiter-knee", cfg.limiter_knee);
     setVal("#init-path", cfg.init_path || "");
+    // restore init audio dropdown from saved path
+    {
+        const sel = $("#init-audio-select");
+        const initPath = cfg.init_path || "";
+        const match = initPath.match(/audio-in\/(.+)$/);
+        if (match && sel.querySelector(`option[value="${CSS.escape(match[1])}"]`)) {
+            sel.value = match[1];
+        }
+        else {
+            sel.value = "";
+        }
+    }
     setVal("#init-noise-level", cfg.init_noise_level);
     setVal("#inpaint-start", cfg.inpaint_start);
     setVal("#inpaint-end", cfg.inpaint_end);
@@ -734,6 +850,10 @@ document.addEventListener("DOMContentLoaded", () => {
     $("#save-config-btn").addEventListener("click", saveConfig);
     $("#load-config-btn").addEventListener("click", loadConfig);
     $("#load-config-input").addEventListener("change", onConfigFileSelected);
+    // Init audio controls
+    $("#init-audio-select").addEventListener("change", onInitAudioSelectChange);
+    $("#init-audio-refresh-btn").addEventListener("click", fetchAudioFiles);
+    $("#init-audio-upload-btn").addEventListener("click", uploadAudioFile);
     // Ctrl+Enter (or Cmd+Enter) triggers generate
     document.addEventListener("keydown", (e) => {
         if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {

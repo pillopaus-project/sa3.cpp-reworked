@@ -54,17 +54,19 @@ std::string g_models_dir;
 std::string g_adapters_dir;
 std::string g_prompts_dir;
 std::string g_source_loras_dir;
+std::string g_audio_in_dir;
 int g_cpu_threads = 0;
 
 // --- async job registry (mirrors gary4local /poll_status) ---
 struct Job {
-    std::string status = "queued";        // queued | generating | encoding | completed | failed
+    std::string status = "queued";        // queued | generating | encoding | completed | failed | cancelled
     int      progress = 0;                // 0..100
     int      step = 0, total_steps = 0;
     std::string audio_b64;                // base64 wav, filled on completion
     std::string loudness_json;
     std::string error;
     uint64_t seed = 0;
+    bool     cancelled = false;           // set by POST /cancel, polled by pipeline
     double   created = 0.0;
     double   finished = 0.0;
 };
@@ -685,10 +687,10 @@ std::string queue_generation(sa3::GenParams params, uint64_t seed_resolved) {
     const std::string limiter_log = params.loudness.limiter_enabled
         ? json_num(params.loudness.limiter_ceiling_db) : "off";
     fprintf(stderr,
-            "[sa3-server] queued %s frames=%d (~%.2fs) target_samples=%d steps=%d keep_models=%s init_samples=%d init_ch=%d inpaint=%.2f..%.2f loras=%zu ae_chunks=enc%d/%d dec%d/%d peak_norm=%s limiter=%s\n",
+            "[sa3-server] queued %s frames=%d (~%.2fs) target_samples=%d steps=%d keep_models=%s init_samples=%d init_ch=%d inpaint=%.2f..%.2f init_noise=%.2f loras=%zu ae_chunks=enc%d/%d dec%d/%d peak_norm=%s limiter=%s\n",
             sid.c_str(), params.frames, (double)params.frames * 4096.0 / 44100.0, params.target_n_samp,
             params.steps, params.keep_models ? "true" : "false", params.init_n_samp, params.init_n_ch,
-            params.inpaint_start, params.inpaint_end, params.loras.size(),
+            params.inpaint_start, params.inpaint_end, params.init_noise_level, params.loras.size(),
             params.encode_chunk_size, params.encode_overlap, params.decode_chunk_size, params.decode_overlap,
             peak_norm_log.c_str(), limiter_log.c_str());
     fflush(stderr);
@@ -707,8 +709,12 @@ std::string queue_generation(sa3::GenParams params, uint64_t seed_resolved) {
             else if (!strcmp(p.stage, "decoding")) it->second.status = "decoding";
             else if (!strcmp(p.stage, "done"))     it->second.status = "finalizing";
         };
+        params.should_cancel = [sid]() {
+            std::lock_guard<std::mutex> jl(jobs_mtx);
+            auto it = jobs.find(sid);
+            return it != jobs.end() && it->second.cancelled;
+        };
         std::lock_guard<std::mutex> lk(g_mtx);
-        { std::lock_guard<std::mutex> jl(jobs_mtx); if (auto it = jobs.find(sid); it != jobs.end()) it->second.status = "generating"; }
         std::string err;
         fprintf(stderr, "[sa3-server] job %s starting\n", sid.c_str());
         fflush(stderr);
@@ -741,7 +747,9 @@ std::string queue_generation(sa3::GenParams params, uint64_t seed_resolved) {
             fflush(stderr);
             std::lock_guard<std::mutex> jl(jobs_mtx);
             if (auto it = jobs.find(sid); it != jobs.end()) {
-                it->second.status = "failed"; it->second.error = e.what(); it->second.finished = sa3::wall_time_s();
+                it->second.status = it->second.cancelled ? "cancelled" : "failed";
+                it->second.error = e.what();
+                it->second.finished = sa3::wall_time_s();
             }
         }
     }).detach();
@@ -758,9 +766,11 @@ int main(int argc, char** argv) {
     if (const char* e = getenv("SA3_ADAPTERS_DIR")) g_adapters_dir = e;
     if (const char* e = getenv("SA3_PROMPTS_DIR"))  g_prompts_dir  = e;
     if (const char* e = getenv("SA3_SOURCE_LORAS_DIR")) g_source_loras_dir = e;
+    if (const char* e = getenv("SA3_AUDIO_IN_DIR"))    g_audio_in_dir = e;
     if (g_models_dir.empty()) g_models_dir = "models";
     if (g_prompts_dir.empty()) g_prompts_dir = "prompts";
     if (g_source_loras_dir.empty()) g_source_loras_dir = "loras";
+    if (g_audio_in_dir.empty()) g_audio_in_dir = "audio-in";
     bool threads_set = false;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
@@ -773,6 +783,7 @@ int main(int argc, char** argv) {
         else if (a == "--adapters-dir") g_adapters_dir = next("");
         else if (a == "--prompts-dir")  g_prompts_dir = next("prompts");
         else if (a == "--source-loras-dir") g_source_loras_dir = next("loras");
+        else if (a == "--audio-in-dir")    g_audio_in_dir = next("audio-in");
         else if (a == "--threads")      { g_cpu_threads = atoi(next("0")); threads_set = true; }
     }
     if (threads_set && g_cpu_threads <= 0) {
@@ -782,6 +793,12 @@ int main(int argc, char** argv) {
     const std::string adir = g_adapters_dir.empty() ? g_models_dir : g_adapters_dir;
     const std::string pdir = g_prompts_dir;
     const std::string sldir = g_source_loras_dir;
+    const std::string aidir = g_audio_in_dir;
+
+    // create audio-in directory if it doesn't exist
+    std::error_code ec;
+    std::filesystem::create_directories(aidir, ec);
+    if (ec) fprintf(stderr, "[sa3-server] WARNING: could not create audio-in dir %s: %s\n", aidir.c_str(), ec.message().c_str());
 
     httplib::Server svr;
 
@@ -987,7 +1004,8 @@ int main(int argc, char** argv) {
             }
         }
 
-        const bool in_prog = status == "queued" || status == "generating" || status == "encoding";
+        const bool in_prog = status == "queued" || status == "generating" || status == "encoding"
+                             || status == "decoding" || status == "finalizing";
         std::string qs = status == "queued"
             ? "{\"status\":\"queued\",\"position\":1,\"total_queued\":1,\"message\":\"queued locally\",\"estimated_seconds\":5}"
             : in_prog ? "{\"status\":\"ready\"}" : "{}";
@@ -1003,10 +1021,91 @@ int main(int argc, char** argv) {
         if (status == "completed")
             body += ",\"audio_data\":\"" + audio_b64 + "\",\"meta\":{\"seed\":" + std::to_string(seed) +
                     ",\"loudness\":" + (loudness_json.empty() ? "{}" : loudness_json) + "}";
-        if (status == "failed")
+        if (status == "failed" || status == "cancelled")
             body += ",\"error\":\"" + json_escape(error) + "\"";
         body += "}";
         res.set_content(body, "application/json");
+    });
+
+    // POST /cancel/<session_id>: cooperative cancel — sets a flag the pipeline polls between steps.
+    svr.Post(R"(/cancel/(.+))", [](const httplib::Request& req, httplib::Response& res) {
+        const std::string sid = req.matches[1];
+        std::lock_guard<std::mutex> lk(jobs_mtx);
+        auto it = jobs.find(sid);
+        if (it == jobs.end()) {
+            res.status = 404;
+            res.set_content("{\"success\":false,\"error\":\"unknown session\"}", "application/json");
+            return;
+        }
+        it->second.cancelled = true;
+        fprintf(stderr, "[sa3-server] cancel requested for job %s\n", sid.c_str());
+        fflush(stderr);
+        res.set_content("{\"success\":true}", "application/json");
+    });
+
+    // GET /audio-in: list WAV files in the audio-in directory
+    svr.Get("/audio-in", [&aidir](const httplib::Request&, httplib::Response& res) {
+        namespace fs = std::filesystem;
+        std::string body = "{\"success\":true,\"files\":[";
+        bool first = true;
+        if (fs::is_directory(aidir)) {
+            for (const auto& entry : fs::directory_iterator(aidir)) {
+                if (!entry.is_regular_file()) continue;
+                std::string ext = entry.path().extension().string();
+                // case-insensitive .wav check
+                for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
+                if (ext != ".wav") continue;
+                if (!first) body += ",";
+                first = false;
+                body += "\"" + json_escape(entry.path().filename().string()) + "\"";
+            }
+        }
+        body += "]}";
+        res.set_content(body, "application/json");
+    });
+
+    // POST /upload: upload a WAV file to the audio-in directory
+    svr.Post("/upload", [&aidir](const httplib::Request& req, httplib::Response& res) {
+        if (!req.form.has_file("file")) {
+            res.status = 400;
+            res.set_content("{\"success\":false,\"error\":\"no file field in multipart form\"}", "application/json");
+            return;
+        }
+        const auto& file = req.form.get_file("file");
+        std::string filename = file.filename;
+        // sanitize: strip path components
+        if (auto pos = filename.find_last_of("/\\"); pos != std::string::npos)
+            filename = filename.substr(pos + 1);
+        // reject directory traversal
+        if (filename.empty() || filename == "." || filename == ".." ||
+            filename.find("..") != std::string::npos) {
+            res.status = 400;
+            res.set_content("{\"success\":false,\"error\":\"invalid filename\"}", "application/json");
+            return;
+        }
+        // require .wav extension
+        {
+            std::string ext = filename;
+            auto dot = ext.rfind('.');
+            ext = (dot != std::string::npos) ? ext.substr(dot) : "";
+            for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
+            if (ext != ".wav") {
+                res.status = 400;
+                res.set_content("{\"success\":false,\"error\":\"only .wav files are accepted\"}", "application/json");
+                return;
+            }
+        }
+        std::filesystem::path dest = std::filesystem::path(aidir) / filename;
+        std::ofstream ofs(dest, std::ios::binary);
+        if (!ofs.is_open()) {
+            res.status = 500;
+            res.set_content("{\"success\":false,\"error\":\"cannot write to audio-in directory\"}", "application/json");
+            return;
+        }
+        ofs.write(file.content.data(), file.content.size());
+        ofs.close();
+        fprintf(stderr, "[sa3-server] uploaded %s (%zu bytes) -> %s\n", filename.c_str(), file.content.size(), dest.string().c_str());
+        res.set_content("{\"success\":true,\"filename\":\"" + json_escape(filename) + "\"}", "application/json");
     });
 
     // GET /: embedded web UI (generated from web/ by tools/gen_embedded_web.py).
@@ -1017,8 +1116,8 @@ int main(int argc, char** argv) {
         res.set_content(embedded_web::app_js, "application/javascript");
     });
 
-    fprintf(stderr, "[sa3-server] http://%s:%d  model=%s/%s  models=%s  adapters=%s  source_loras=%s  prompts=%s  (async /poll_status; frugal default)\n",
-            host.c_str(), port, g_variant.c_str(), g_encoding.c_str(), g_models_dir.c_str(), adir.c_str(), sldir.c_str(), pdir.c_str());
+    fprintf(stderr, "[sa3-server] http://%s:%d  model=%s/%s  models=%s  adapters=%s  source_loras=%s  prompts=%s  audio-in=%s  (async /poll_status; frugal default)\n",
+            host.c_str(), port, g_variant.c_str(), g_encoding.c_str(), g_models_dir.c_str(), adir.c_str(), sldir.c_str(), pdir.c_str(), aidir.c_str());
     if (!svr.listen(host.c_str(), port)) {
         fprintf(stderr, "[sa3-server] failed to bind %s:%d\n", host.c_str(), port);
         return 1;
