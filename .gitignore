@@ -29,6 +29,9 @@ checkpoints/
 *.gguf
 *.safetensors
 
+audio-in/*
+!audio-in/README.md
+
 # Python
 __pycache__/
 *.pyc
