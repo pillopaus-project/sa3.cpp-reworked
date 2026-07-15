@@ -40,7 +40,8 @@ BASE="stable-audio-3-$VARIANT"
 mkdir -p "$OUT"
 
 dl() {   # dl <repo> <filename>
-  local repo="$1" file="$2" dst="$OUT/$file"
+  local repo="$1" file="$2"
+  local dst="$OUT/$file"
   if [ -f "$dst" ]; then
     echo "[check/resume] $file"
   else
@@ -55,4 +56,4 @@ dl "$VAR_REPO" "$BASE-conditioner-v1.0-F32.gguf"
 dl "$SHARED"   "t5gemma-b-b-ul2-encoder-0.3B-v1.0-F32.gguf"
 dl "$SHARED"   "t5gemma-b-b-ul2-v1.0-vocab.gguf"
 
-echo "[done] $VARIANT ($ENCODING) -> $OUT/"
+echo "[done] $VARIANT ($ENCODING) -> $OUT"
