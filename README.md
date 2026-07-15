@@ -1,4 +1,31 @@
 # stable-audio-3 in c++
+last changes :
+
+Replace all SA3_* env vars with Sa3Config CLI flags + JSON params
+
+New CLI flags (sa3-server, sa3-generate):
+  --device, --gpu, --flash-attn, --same-flash-attn, --profile, --dump-cond
+  --models-dir optional, defaults to ./models
+
+Runtime JSON params (server /generate, /generate/loop):
+  loop_pad_seconds, default_loop_bars, max_duration, bpm, seed,
+  inpaint_start, inpaint_end, all CFG fields, all loudness fields,
+  encode/decode chunk size + overlap
+
+Web frontend:
+  - No hardcoded defaults in HTML/JS — fetches GET /config on startup
+  - Removed DIST_SHIFT_DEFAULTS; uses server-provided dist_shift_defaults
+  - Removed all value="..." attributes from index.html
+  - Form populated dynamically from /config response
+
+Default value changes:
+  peak_normalize_db: +2.0 → -1.0 dB
+  limiter_ceiling_db: -0.3 → -1.5 dB
+  encode_chunk_size: 0 → 512
+  decode_chunk_size: 0 → 512
+  seed: 0 → -1 (random)
+  bpm: added default 120
+
 Interface update : 
 
 <img width="1649" height="1336" alt="Screenshot from 2026-07-11 11-54-01" src="https://github.com/user-attachments/assets/c1a6679d-cb85-4fc9-a19c-3b78ddcfea64" />
