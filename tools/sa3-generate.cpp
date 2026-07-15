@@ -8,7 +8,7 @@
 #include "same_ae.h"
 #include "lora.h"
 #include "sa3_pipeline.h"
-#include "env.h"
+#include "sa3_config.h"
 #include "rng.h"
 #include "wav.h"
 
@@ -23,45 +23,42 @@
 #include <string>
 #include <vector>
 
-// (expo_features / wall_time_s / profile_* / tensor_to_host / set_swa_bias moved to sa3_pipeline.h)
-
 int main(int argc, char** argv) {
-    sa3::load_dotenv();   // ./.env -> SA3_* defaults (real env wins); must precede every getenv below
-    const bool prof = sa3::profile_enabled();
+    Sa3Config cfg;
     const double t_total0 = sa3::wall_time_s();
     const char* tok_p = nullptr; const char* t5_p = nullptr; const char* dit_p = nullptr; const char* same_p = nullptr;
-    const char* cond_p = nullptr;            // per-variant conditioner sidecar gguf (optional; falls back to --t5 if bundled)
-    const char* model_variant = nullptr;     // --model: resolve the 5 base ggufs by naming convention
-    const char* encoding = "f16";            // --encoding f16|f32 (which DiT/SAME precision --model picks)
-    const char* env_md = getenv("SA3_MODELS_DIR");
-    const char* models_dir = (env_md && *env_md) ? env_md : "models";  // --models-dir / SA3_MODELS_DIR
-    const char* env_ad = getenv("SA3_ADAPTERS_DIR");
-    const char* adapters_dir = (env_ad && *env_ad) ? env_ad : nullptr; // --adapters-dir / SA3_ADAPTERS_DIR (else = models_dir)
+    const char* cond_p = nullptr;
     std::string prompt = "Upbeat funk groove with slap bass, bright horns, tight drums";
     const char* wav_p = "song.wav";
-    const char* init_p = nullptr;            // audio2audio / inpaint: source WAV (encoded to z_init)
-    float init_noise_level = 0.85f;          // sigma_max for audio2audio (1.0 == text2music)
-    float inpaint_start = -1.0f, inpaint_end = -1.0f;   // inpaint: regenerate this [start,end] sec region
-    std::vector<std::pair<std::string,float>> lora_specs;   // (gguf, strength) applied in flag order
-    bool keep_models = false;        // --keep-models: don't free TE/DIT early (keep all resident)
-    int encode_chunk_size = 0, encode_overlap = 32;     // outer SAME-L encode tiling; 0 = monolithic
-    int decode_chunk_size = 0, decode_overlap = 32;     // outer SAME-L decode tiling; 0 = monolithic
-    int frames = 128, steps = 8; long long seed = 0;   // seed < 0 (e.g. -1) => random (resolved below)
-    int cpu_threads = 0;
-    bool frames_set = false, duration_set = false, threads_set = false;
+    const char* init_p = nullptr;
+    float inpaint_start = -1.0f, inpaint_end = -1.0f;
+    std::vector<std::pair<std::string,float>> lora_specs;
+    bool keep_models = false;
+    int encode_chunk_size = 0, encode_overlap = 32;
+    int decode_chunk_size = 0, decode_overlap = 32;
+    long long seed = 0;
+    bool frames_set = false, duration_set = false;
     double duration_sec = 0.0;
-    std::string dist_shift = "LogSNR";                  // schedule warp: LogSNR|Flux|Full|None
-    float ds_p1 = 2000.0f, ds_p2 = -6.2f, ds_p3 = 0.0f, ds_p4 = 2.0f;   // LogSNR defaults (per-type, see --dist-shift)
-    float duration_padding_sec = 6.0f;                  // text2music schedule headroom (0 = let the model end the piece)
-    std::string negative_prompt;                        // CFG negative prompt (only used when cfg_scale != 1)
-    float cfg_scale = 1.0f, cfg_rescale = 0.0f, apg_scale = 1.0f, cfg_norm_threshold = 0.0f;
+    float duration_padding_sec = 6.0f;
+    std::string negative_prompt;
+    std::string dist_shift = "LogSNR";
+    float ds_p1 = 2000.0f, ds_p2 = -6.2f, ds_p3 = 0.0f, ds_p4 = 2.0f;
+    float cfg_scale = (float)cfg.cfg_scale, cfg_rescale = 0.0f, apg_scale = 1.0f, cfg_norm_threshold = 0.0f;
     float cfg_interval_min = 0.0f, cfg_interval_max = 1.0f;
-    sa3::LoudnessParams loudness = sa3::loudness_defaults_from_env();
+    sa3::LoudnessParams loudness = cfg.loudness;
+    int frames = 128;
+
     for (int i = 1; i < argc; i++) {
-        if      (!strcmp(argv[i], "--model")  && i+1 < argc) model_variant = argv[++i];
-        else if (!strcmp(argv[i], "--encoding") && i+1 < argc) encoding = argv[++i];
-        else if (!strcmp(argv[i], "--models-dir") && i+1 < argc) models_dir = argv[++i];
-        else if (!strcmp(argv[i], "--adapters-dir") && i+1 < argc) adapters_dir = argv[++i];
+        if      (!strcmp(argv[i], "--model")  && i+1 < argc) cfg.model_variant = argv[++i];
+        else if (!strcmp(argv[i], "--encoding") && i+1 < argc) cfg.encoding = argv[++i];
+        else if (!strcmp(argv[i], "--models-dir") && i+1 < argc) cfg.models_dir = argv[++i];
+        else if (!strcmp(argv[i], "--adapters-dir") && i+1 < argc) cfg.adapters_dir = argv[++i];
+        else if (!strcmp(argv[i], "--device") && i+1 < argc) cfg.device = argv[++i];
+        else if (!strcmp(argv[i], "--gpu") && i+1 < argc) cfg.gpu_selector = argv[++i];
+        else if (!strcmp(argv[i], "--flash-attn") && i+1 < argc) cfg.flash_attn = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--same-flash-attn") && i+1 < argc) cfg.same_flash_attn_mode = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--profile") && i+1 < argc) cfg.profile = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--dump-cond") && i+1 < argc) cfg.dump_cond_dir = argv[++i];
         else if (!strcmp(argv[i], "--tok")    && i+1 < argc) tok_p = argv[++i];
         else if (!strcmp(argv[i], "--t5")     && i+1 < argc) t5_p = argv[++i];
         else if (!strcmp(argv[i], "--dit")    && i+1 < argc) dit_p = argv[++i];
@@ -70,24 +67,24 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--prompt") && i+1 < argc) prompt = argv[++i];
         else if (!strcmp(argv[i], "--frames") && i+1 < argc) { frames = atoi(argv[++i]); frames_set = true; }
         else if (!strcmp(argv[i], "--duration") && i+1 < argc) { duration_sec = atof(argv[++i]); duration_set = true; }
-        else if (!strcmp(argv[i], "--steps")  && i+1 < argc) steps = atoi(argv[++i]);
-        else if (!strcmp(argv[i], "--threads") && i+1 < argc) { cpu_threads = atoi(argv[++i]); threads_set = true; }
+        else if (!strcmp(argv[i], "--steps")  && i+1 < argc) cfg.steps = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--threads") && i+1 < argc) { cfg.cpu_threads = atoi(argv[++i]); if (cfg.cpu_threads <= 0) { fprintf(stderr, "--threads must be positive\n"); return 1; } }
         else if (!strcmp(argv[i], "--seed")   && i+1 < argc) seed = strtoll(argv[++i], nullptr, 10);
         else if (!strcmp(argv[i], "--out")    && i+1 < argc) wav_p = argv[++i];
         else if (!strcmp(argv[i], "--init")   && i+1 < argc) init_p = argv[++i];
-        else if (!strcmp(argv[i], "--init-noise-level") && i+1 < argc) init_noise_level = (float)atof(argv[++i]);
+        else if (!strcmp(argv[i], "--init-noise-level") && i+1 < argc) cfg.init_noise_level = (float)atof(argv[++i]);
         else if (!strcmp(argv[i], "--inpaint-start") && i+1 < argc) inpaint_start = (float)atof(argv[++i]);
         else if (!strcmp(argv[i], "--inpaint-end")   && i+1 < argc) inpaint_end   = (float)atof(argv[++i]);
         else if (!strcmp(argv[i], "--lora")   && i+1 < argc) lora_specs.push_back({argv[++i], 1.0f});
-        else if (!strcmp(argv[i], "--lora-strength") && i+1 < argc) {   // sets the most recent --lora
+        else if (!strcmp(argv[i], "--lora-strength") && i+1 < argc) {
             if (lora_specs.empty()) { fprintf(stderr, "--lora-strength must follow a --lora\n"); return 1; }
             lora_specs.back().second = (float)atof(argv[++i]);
         }
-        else if (!strcmp(argv[i], "--dist-shift") && i+1 < argc) {   // selects type + its default params
+        else if (!strcmp(argv[i], "--dist-shift") && i+1 < argc) {
             dist_shift = argv[++i];
             sa3::dist_shift_defaults(dist_shift, ds_p1, ds_p2, ds_p3, ds_p4);
         }
-        else if (!strcmp(argv[i], "--dist-shift-params") && i+1 < argc) {   // override the 4 params (follows --dist-shift)
+        else if (!strcmp(argv[i], "--dist-shift-params") && i+1 < argc) {
             if (sscanf(argv[++i], "%f,%f,%f,%f", &ds_p1, &ds_p2, &ds_p3, &ds_p4) != 4) {
                 fprintf(stderr, "--dist-shift-params expects p1,p2,p3,p4 (meaning depends on --dist-shift)\n");
                 return 1;
@@ -110,7 +107,7 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--encode-overlap") && i+1 < argc) encode_overlap = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--decode-chunk-size") && i+1 < argc) decode_chunk_size = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--decode-overlap") && i+1 < argc) decode_overlap = atoi(argv[++i]);
-        else if (!strcmp(argv[i], "--keep-models")) keep_models = true;   // disable progressive VRAM frees
+        else if (!strcmp(argv[i], "--keep-models")) keep_models = true;
         else if (!strcmp(argv[i], "--latent-rescale") && i+1 < argc) loudness.latent_rescale = (float)atof(argv[++i]);
         else if (!strcmp(argv[i], "--latent-shift") && i+1 < argc) loudness.latent_shift = (float)atof(argv[++i]);
         else if (!strcmp(argv[i], "--latent-target-std") && i+1 < argc) {
@@ -132,46 +129,46 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--no-limiter")) loudness.limiter_enabled = false;
         else if (!strcmp(argv[i], "--limiter-knee") && i+1 < argc) loudness.limiter_knee = (float)atof(argv[++i]);
     }
+
+    // Apply config to library globals
+    sa3::nn::g_flash_attn_enabled = cfg.flash_attn != 0;
+    sa3::nn::g_same_flash_attn_mode = cfg.same_flash_attn_mode;
+    sa3::g_profile_enabled = cfg.profile != 0;
+    sa3::g_dump_cond_dir = cfg.dump_cond_dir;
+
     // --model <variant>: fill the five base ggufs from <models-dir> by the naming convention.
     // Explicit --tok/--t5/--cond/--dit/--same still win (override per-slot).
-    std::vector<std::string> resolved; resolved.reserve(5);   // keep resolved paths alive for the char* slots
-    if (model_variant) {
-        const std::string mv = model_variant, md = models_dir;
-        const std::string ENC = (strcmp(encoding, "f32") == 0) ? "F32" : "F16";
-        auto fill = [&](const char*& slot, const std::string& prefix, const std::string& suffix) {
-            if (slot) return;                                  // explicit flag overrides the convention
-            std::string p = sa3::resolve_one(md, prefix, suffix);
-            if (p.empty()) {
-                fprintf(stderr, "[sa3] --model %s: no %s*%s in %s/ (run: python tools/download_models.py --variant %s)\n",
-                        mv.c_str(), prefix.c_str(), suffix.c_str(), md.c_str(), mv.c_str());
-                exit(1);
-            }
-            resolved.push_back(std::move(p)); slot = resolved.back().c_str();
-        };
-        fill(tok_p,  "t5gemma-b-b-ul2-v1.0-vocab",             ".gguf");
-        fill(t5_p,   "t5gemma-b-b-ul2-encoder-",               ".gguf");        // shared encoder (F32)
-        fill(cond_p, "stable-audio-3-" + mv + "-conditioner-", ".gguf");        // F32
-        fill(dit_p,  "stable-audio-3-" + mv + "-dit-",  "-" + ENC + ".gguf");
-        fill(same_p, "stable-audio-3-" + mv + "-same-", "-" + ENC + ".gguf");
+    sa3::ModelPaths paths;
+    if (!cfg.model_variant.empty()) {
+        std::string resolve_err;
+        if (!sa3::ModelPaths::resolve(cfg.models_dir, cfg.model_variant, cfg.encoding, paths, resolve_err)) {
+            fprintf(stderr, "error: %s\n", resolve_err.c_str());
+            return 1;
+        }
     }
-    // --lora <name|path>: a bare name resolves to <adapters-dir>/lora-<name>-*.gguf (adapters can live
-    // anywhere via SA3_ADAPTERS_DIR/--adapters-dir; defaults to the models dir). A real path is used as-is.
-    const char* adir = adapters_dir ? adapters_dir : models_dir;
+    if (tok_p)  paths.tok  = tok_p;
+    if (t5_p)   paths.t5   = t5_p;
+    if (cond_p) paths.cond = cond_p;
+    if (dit_p)  paths.dit  = dit_p;
+    if (same_p) paths.same = same_p;
+
+    // --lora <name|path>: a bare name resolves to <adapters-dir>/lora-<name>-*.gguf.
+    // A real path is used as-is.
     for (auto& spec : lora_specs) {
         if (std::filesystem::exists(spec.first)) continue;
-        std::string p = sa3::resolve_one(adir, "lora-" + spec.first + "-", ".gguf");
+        std::string p = sa3::resolve_one(cfg.adapters_dir, "lora-" + spec.first + "-", ".gguf");
         if (p.empty()) {
             fprintf(stderr, "[sa3] --lora %s: not a file and no lora-%s-*.gguf in %s/\n",
-                    spec.first.c_str(), spec.first.c_str(), adir);
-            exit(1);
+                    spec.first.c_str(), spec.first.c_str(), cfg.adapters_dir.c_str());
+            return 1;
         }
         spec.first = std::move(p);
     }
 
-    const bool inpaint = (inpaint_start >= 0.0f || inpaint_end >= 0.0f);   // inpaint mode (needs --init source)
-    if (!tok_p || !t5_p || !dit_p || !same_p) {
-        fprintf(stderr, "usage: sa3-generate (--model medium|small-music|small-sfx [--encoding f16|f32] [--models-dir DIR]\n"
-                        "                     | --tok <f> --t5 <f> --cond <f> --dit <f> --same <f>)\n"
+    const bool inpaint = (inpaint_start >= 0.0f || inpaint_end >= 0.0f);
+    if (paths.tok.empty() || paths.t5.empty() || paths.dit.empty() || paths.same.empty()) {
+        fprintf(stderr, "usage: sa3-generate [--models-dir DIR] [--model medium|small-music|small-sfx [--encoding f16|f32]]\n"
+                        "                     [--tok <f> --t5 <f> --cond <f> --dit <f> --same <f>]\n"
                         "                     --prompt \"...\" [--lora NAME|PATH [--lora-strength S]]... [--duration SEC | --frames N] [--steps N] [--threads N] [--seed S]\n"
                         "                     [--dist-shift LogSNR|Flux|Full|None [--dist-shift-params p1,p2,p3,p4]] [--duration-padding SEC]\n"
                         "                     [--cfg-scale S [--negative-prompt \"...\"] [--cfg-rescale R] [--cfg-interval min,max] [--apg-scale A] [--cfg-norm-threshold T]] [--out song.wav]\n");
@@ -198,14 +195,10 @@ int main(int argc, char** argv) {
         }
         target_n_samp = (int)samples_d;
         frames = std::max(1, (target_n_samp + 4095) / 4096);
-        if (frames & 1) frames++;  // SAME-S needs even latent frame counts; harmless for SAME-L.
+        if (frames & 1) frames++;
     }
     if (frames <= 0) {
         fprintf(stderr, "--frames must be positive\n");
-        return 1;
-    }
-    if (threads_set && cpu_threads <= 0) {
-        fprintf(stderr, "--threads must be positive\n");
         return 1;
     }
     if (encode_chunk_size < 0 || encode_overlap < 0 ||
@@ -223,18 +216,14 @@ int main(int argc, char** argv) {
     }
 
     // ---------- build model paths + the request, then run the shared pipeline ----------
-    sa3::ModelPaths paths;
-    paths.tok = tok_p; paths.t5 = t5_p; paths.dit = dit_p; paths.same = same_p;
-    if (cond_p) paths.cond = cond_p;
-
     sa3::GenParams params;
     params.prompt            = prompt;
     params.frames            = frames;
     params.target_n_samp     = target_n_samp;
-    params.steps             = steps;
-    const uint64_t seed_resolved = sa3::pick_seed(seed);   // -1 => random
+    params.steps             = cfg.steps;
+    const uint64_t seed_resolved = sa3::pick_seed(seed);
     params.seed              = seed_resolved;
-    params.init_noise_level  = init_noise_level;
+    params.init_noise_level  = (float)cfg.init_noise_level;
     params.inpaint_start     = inpaint_start;
     params.inpaint_end       = inpaint_end;
     params.encode_chunk_size = encode_chunk_size;
@@ -249,10 +238,10 @@ int main(int argc, char** argv) {
     params.cfg_scale = cfg_scale; params.cfg_rescale = cfg_rescale; params.apg_scale = apg_scale;
     params.cfg_norm_threshold = cfg_norm_threshold;
     params.cfg_interval_min = cfg_interval_min; params.cfg_interval_max = cfg_interval_max;
-    params.keep_models       = keep_models;   // no on_progress -> the pipeline prints the step lines itself
+    params.keep_models       = keep_models;
     for (auto& ls : lora_specs) params.loras.push_back(ls);
 
-    if (init_p) {   // audio2audio / inpaint source WAV -> raw planar samples + rate (pipeline resamples)
+    if (init_p) {
         int n_samp = 0, n_ch = 0, sr = 0;
         params.init_audio = sa3::read_wav_planar(init_p, n_samp, n_ch, sr);
         params.init_n_samp = n_samp; params.init_n_ch = n_ch; params.init_sample_rate = sr;
@@ -260,11 +249,13 @@ int main(int argc, char** argv) {
 
     try {
         sa3::Pipeline pipe;
-        pipe.load(paths, cpu_threads);
+        pipe.load(paths, cfg.cpu_threads,
+                  cfg.device.empty() ? nullptr : cfg.device.c_str(),
+                  cfg.gpu_selector.empty() ? nullptr : cfg.gpu_selector.c_str());
         sa3::GenResult r = pipe.generate(params);
         double tp = sa3::wall_time_s();
         sa3::write_wav_planar(wav_p, r.samples.data(), r.n_samp, r.n_ch, r.sample_rate);
-        sa3::profile_log(prof, "write_wav", sa3::wall_time_s() - tp);
+        sa3::profile_log("write_wav", sa3::wall_time_s() - tp);
         const double elapsed = sa3::wall_time_s() - t_total0;
         printf("wrote %s  (audio %.2fs, elapsed %.2fs, seed %llu)\n",
                wav_p, (float)r.n_samp / r.sample_rate, elapsed, (unsigned long long)seed_resolved);
@@ -272,6 +263,6 @@ int main(int argc, char** argv) {
         fprintf(stderr, "error: %s\n", e.what());
         return 1;
     }
-    sa3::profile_log(prof, "total", sa3::wall_time_s() - t_total0);
+    sa3::profile_log("total", sa3::wall_time_s() - t_total0);
     return 0;
 }

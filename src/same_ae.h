@@ -146,7 +146,7 @@ inline ggml_tensor* same_block(ggml_context* ctx, const GgufModel& W, const std:
     //   SAME-L (sliding window): overlapping-block banded attention; `mask` = [3*sub_chunk, sub_chunk, nb] SWA bias.
     //   SAME-L flash opt-in: full F16 [N,N] band mask or compact F16 [3b,b,nb] mask + ggml_flash_attn_ext.
     auto same_l_attn = [&](ggml_tensor* qq, ggml_tensor* kk) {
-        const int flash_mode = nn::same_flash_attn_mode();
+        const int flash_mode = nn::g_same_flash_attn_mode;
         if (flash_mode == 2 && mask && mask->type == GGML_TYPE_F16) {
             return nn::attn_sliding_flash_ext(ctx, qq, kk, v, c.sub_chunk, mask, scale);
         }

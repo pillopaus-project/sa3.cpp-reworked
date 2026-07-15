@@ -48,6 +48,33 @@ interface LoopGenerateRequest extends GenerateRequest {
   bars?: number;
 }
 
+interface ConfigResponse {
+  model_variant: string;
+  encoding: string;
+  duration: number;
+  max_duration: number;
+  steps: number;
+  default_loop_bars: number;
+  loop_pad_seconds: number;
+  cfg_scale: number;
+  cfg_rescale: number;
+  apg_scale: number;
+  cfg_norm_threshold: number;
+  cfg_interval_min: number;
+  cfg_interval_max: number;
+  init_noise_level: number;
+  encode_chunk_size: number;
+  encode_overlap: number;
+  decode_chunk_size: number;
+  decode_overlap: number;
+  inpaint_start: number;
+  inpaint_end: number;
+  seed: number;
+  bpm: number;
+  loudness: Record<string, unknown>;
+  dist_shift_defaults: Record<string, [number, number, number, number]>;
+}
+
 interface HealthResponse {
   status: string;
   model: string;
@@ -98,14 +125,7 @@ interface AudioInResponse {
   files: string[];
 }
 
-// ─── Dist-shift default profiles ───────────────────────────────────────────
-
-const DIST_SHIFT_DEFAULTS: Record<string, [number, number, number, number]> = {
-  LogSNR: [2000, -6.2, 0, 2],
-  Flux: [256, 4096, 6.93, 6.93],
-  Full: [0.5, 1.15, 256, 4096],
-  None: [0, 0, 0, 0],
-};
+// ─── Dist-shift labels (param meanings per type) ───────────────────────────
 
 const DIST_SHIFT_LABELS: Record<string, [string, string, string, string]> = {
   LogSNR: ["anchor_length", "anchor_logsnr", "rate", "logsnr_end"],
@@ -117,6 +137,7 @@ const DIST_SHIFT_LABELS: Record<string, [string, string, string, string]> = {
 // ─── State ──────────────────────────────────────────────────────────────────
 
 const server = { host: "127.0.0.1", port: 8006 };
+let configDefaults: ConfigResponse | null = null;
 let loraList: LoraEntry[] = [];
 let activeLoras: LoraSpec[] = [];
 let currentSessionId: string | null = null;
@@ -264,6 +285,55 @@ async function checkHealth(): Promise<void> {
   }
 }
 
+// ─── Config fetch (populate defaults from server) ───────────────────────────
+
+async function fetchConfig(): Promise<void> {
+  try {
+    configDefaults = await apiGet<ConfigResponse>("/config");
+    applyConfigDefaults();
+  } catch {
+    // server not connected yet — form stays empty until health check succeeds
+  }
+}
+
+function applyConfigDefaults(): void {
+  if (!configDefaults) return;
+  const c = configDefaults;
+  setVal("#duration", c.duration);
+  setVal("#duration-num", c.duration);
+  setVal("#steps", c.steps);
+  setVal("#steps-num", c.steps);
+  setVal("#duration-padding", c.loop_pad_seconds);
+  setVal("#duration-padding-num", c.loop_pad_seconds);
+  setVal("#cfg-scale", c.cfg_scale);
+  setVal("#cfg-rescale", c.cfg_rescale);
+  setVal("#apg-scale", c.apg_scale);
+  setVal("#cfg-norm-threshold", c.cfg_norm_threshold);
+  setVal("#cfg-interval-min", c.cfg_interval_min);
+  setVal("#cfg-interval-max", c.cfg_interval_max);
+  setVal("#init-noise-level", c.init_noise_level);
+  setVal("#loop-bpm", c.bpm);
+  setVal("#encode-chunk-size", c.encode_chunk_size);
+  setVal("#encode-overlap", c.encode_overlap);
+  setVal("#decode-chunk-size", c.decode_chunk_size);
+  setVal("#decode-overlap", c.decode_overlap);
+  setVal("#inpaint-start", c.inpaint_start);
+  setVal("#inpaint-end", c.inpaint_end);
+  setVal("#seed", c.seed);
+  if (c.loudness) {
+    const l = c.loudness;
+    if (l.latent_rescale != null) setVal("#latent-rescale", l.latent_rescale as number);
+    if (l.latent_shift != null) setVal("#latent-shift", l.latent_shift as number);
+    if (l.latent_target_std != null) setVal("#latent-target-std", l.latent_target_std as number);
+    if (l.latent_adapt_min != null) setVal("#latent-adapt-min", l.latent_adapt_min as number);
+    if (l.latent_adapt_max != null) setVal("#latent-adapt-max", l.latent_adapt_max as number);
+    if (l.peak_normalize_db != null) setVal("#peak-normalize-db", l.peak_normalize_db as number);
+    if (l.limiter_ceiling_db != null) setVal("#limiter-ceiling-db", l.limiter_ceiling_db as number);
+    if (l.limiter_knee != null) setVal("#limiter-knee", l.limiter_knee as number);
+  }
+  onDistShiftChange();
+}
+
 // ─── Loras ──────────────────────────────────────────────────────────────────
 
 async function loadLoras(): Promise<void> {
@@ -386,7 +456,7 @@ async function uploadAudioFile(): Promise<void> {
 function onDistShiftChange(): void {
   const type = val("#dist-shift");
   const labels = DIST_SHIFT_LABELS[type] || ["p1", "p2", "p3", "p4"];
-  const defaults = DIST_SHIFT_DEFAULTS[type] || [0, 0, 0, 0];
+  const defaults = configDefaults?.dist_shift_defaults?.[type] ?? [0, 0, 0, 0];
   for (let i = 0; i < 4; i++) {
     const input = $<HTMLInputElement>(`#dsp${i + 1}`);
     const label = document.querySelector(`label[for="dsp${i + 1}"]`);
@@ -1052,4 +1122,5 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Auto-connect to server on page load
   checkHealth();
+  fetchConfig();
 });

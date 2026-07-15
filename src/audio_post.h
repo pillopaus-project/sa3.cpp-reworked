@@ -46,10 +46,10 @@ struct LoudnessParams {
     float latent_adapt_max = 1.0f;
 
     bool  peak_normalize_enabled = true;
-    float peak_normalize_db = 2.0f;
+    float peak_normalize_db = -1.0f;
 
     bool  limiter_enabled = true;
-    float limiter_ceiling_db = -0.3f;
+    float limiter_ceiling_db = -1.5f;
     float limiter_knee = 0.8f;
 };
 
@@ -93,35 +93,7 @@ inline bool text_disables_optional_float(const char* text) {
     return s.empty() || s == "off" || s == "none" || s == "null" || s == "false" || s == "disabled";
 }
 
-inline float env_float(const char* name, float fallback) {
-    float v = fallback;
-    const char* text = std::getenv(name);
-    return parse_float_text(text, v) ? v : fallback;
-}
 
-inline void env_optional_float(const char* name, bool& enabled, float& value, bool positive_disables = false) {
-    const char* text = std::getenv(name);
-    if (!text) return;
-    if (text_disables_optional_float(text)) { enabled = false; return; }
-    float v = value;
-    if (!parse_float_text(text, v)) return;
-    if (positive_disables && v > 0.0f) { enabled = false; return; }
-    enabled = true;
-    value = v;
-}
-
-inline LoudnessParams loudness_defaults_from_env() {
-    LoudnessParams p;
-    p.latent_rescale = env_float("SA3_LATENT_RESCALE", p.latent_rescale);
-    p.latent_shift = env_float("SA3_LATENT_SHIFT", p.latent_shift);
-    env_optional_float("SA3_LATENT_TARGET_STD", p.latent_target_std_enabled, p.latent_target_std);
-    p.latent_adapt_min = env_float("SA3_LATENT_ADAPT_MIN", p.latent_adapt_min);
-    p.latent_adapt_max = env_float("SA3_LATENT_ADAPT_MAX", p.latent_adapt_max);
-    env_optional_float("SA3_PEAK_NORMALIZE_DB", p.peak_normalize_enabled, p.peak_normalize_db);
-    env_optional_float("SA3_LIMITER_CEILING_DB", p.limiter_enabled, p.limiter_ceiling_db, true);
-    p.limiter_knee = env_float("SA3_LIMITER_KNEE", p.limiter_knee);
-    return p;
-}
 
 inline void normalize_loudness_params(LoudnessParams& p) {
     if (p.limiter_enabled && p.limiter_ceiling_db > 0.0f) p.limiter_enabled = false;

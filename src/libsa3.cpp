@@ -100,7 +100,8 @@ static int sa3_generate_impl(sa3_context* ctx, const sa3_request* req, const sa3
             if (!sa3::validate_loudness_params(lp, lerr)) { set_err(err, err_len, "loudness: " + lerr); return 4; }
             p.loudness = lp;
         } else {
-            p.loudness = sa3::loudness_defaults_from_env();   // gary4local defaults + SA3_* env overrides
+            // use the LoudnessParams ctor defaults (gary4local-compatible)
+            p.loudness = sa3::LoudnessParams();
         }
 
         if (req_ex) {
@@ -151,7 +152,7 @@ static sa3_context* sa3_init_impl(const sa3_config* cfg, int cpu_threads, const 
     try {
         if (cpu_threads < 0) { set_err(err, err_len, "cpu_threads must be positive"); return nullptr; }
         std::string models_dir = cfg && cfg->models_dir ? cfg->models_dir : "";
-        if (models_dir.empty()) { const char* e = std::getenv("SA3_MODELS_DIR"); models_dir = (e && *e) ? e : "models"; }
+        if (models_dir.empty()) models_dir = "models";
         const std::string variant  = cfg && cfg->variant  ? cfg->variant  : "medium";
         const std::string encoding = cfg && cfg->encoding ? cfg->encoding : "f16";
         const std::string adir     = cfg && cfg->adapters_dir ? cfg->adapters_dir : models_dir;

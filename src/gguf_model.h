@@ -70,18 +70,6 @@ inline std::string gguf_short_read_message(const char* path, const char* name,
     return msg;
 }
 
-inline int cpu_threads_from_env() {
-    const char* v = getenv("SA3_THREADS");
-    if (!v || !*v) return 0;
-    char* end = nullptr;
-    long n = strtol(v, &end, 10);
-    if (!end || *end != '\0' || n <= 0 || n > 1024) {
-        fprintf(stderr, "[sa3] ignoring invalid SA3_THREADS='%s' (expected a positive integer)\n", v);
-        return 0;
-    }
-    return (int)n;
-}
-
 inline void load_dynamic_backends_once() {
     static bool loaded = false;
     if (!loaded) {
@@ -103,25 +91,22 @@ inline void configure_cpu_threads(ggml_backend_t b, int n_threads) {
     }
 }
 
-// Pick the compute backend: a registered GPU/iGPU device (CUDA when the CUDA backend is
-// linked) unless SA3_DEVICE=cpu forces CPU. In a CPU-only build the registry has no
-// GPU/iGPU device, so this transparently returns the CPU backend — same code, both builds.
+// Pick the compute backend: a registered GPU/iGPU device unless device="cpu" forces CPU.
+// In a CPU-only build the registry has no GPU/iGPU device, so this transparently returns
+// the CPU backend — same code, both builds.
 //
 // Device choice among GPUs: the Vulkan backend registers EVERY Vulkan device, so on a
 // laptop with an Intel iGPU + a discrete NVIDIA GPU the first-by-type device may be the
 // iGPU (wrong: tiny VRAM, slow). We therefore enumerate all GPU devices and, by default,
 // prefer a discrete GPU, then the one with the most total memory. If only an integrated
-// GPU/APU is present, use that instead of silently falling back to CPU. SA3_GPU overrides this:
-// a 0-based index into the GPU/iGPU list, or a case-insensitive substring of the device name
-// (e.g. SA3_GPU=nvidia). CUDA builds expose a single GPU device, so this is a no-op there.
-// device: explicit device request from the API (nullptr/empty falls back to the
-// SA3_DEVICE env var, so CLI usage is unchanged). "cpu" forces the CPU backend;
-// anything else selects a GPU (optionally narrowed by SA3_GPU) with CPU fallback.
-inline ggml_backend_t make_backend(int cpu_threads = 0, const char* device = nullptr) {
+// GPU/APU is present, use that instead of silently falling back to CPU. `gpu_selector`
+// overrides this: a 0-based index into the GPU/iGPU list, or a case-insensitive substring
+// of the device name (e.g. "nvidia"). CUDA builds expose a single GPU device, so this
+// is a no-op there. "cpu" forces the CPU backend; anything else selects a GPU (optionally
+// narrowed by gpu_selector) with CPU fallback.
+inline ggml_backend_t make_backend(int cpu_threads = 0, const char* device = nullptr, const char* gpu_selector = nullptr) {
     load_dynamic_backends_once();
-    std::string dev_str = (device && *device) ? device : "";
-    if (dev_str.empty()) { const char* e = getenv("SA3_DEVICE"); if (e) dev_str = e; }
-    const char* dev = dev_str.empty() ? nullptr : dev_str.c_str();
+    const char* dev = (device && *device) ? device : nullptr;
     if (!(dev && strcmp(dev, "cpu") == 0)) {
         // Collect all GPU/iGPU devices in registry order.
         std::vector<ggml_backend_dev_t> gpus;
@@ -133,11 +118,10 @@ inline ggml_backend_t make_backend(int cpu_threads = 0, const char* device = nul
         }
         if (!gpus.empty()) {
             ggml_backend_dev_t chosen = nullptr;
-            const char* sel = getenv("SA3_GPU");
-            if (sel && *sel) {
+            if (gpu_selector && *gpu_selector) {
                 // Try index first; a pure-integer string selects by position.
                 char* end = nullptr;
-                long idx = strtol(sel, &end, 10);
+                long idx = strtol(gpu_selector, &end, 10);
                 if (end && *end == '\0' && idx >= 0 && (size_t)idx < gpus.size()) {
                     chosen = gpus[(size_t)idx];
                 } else {
@@ -145,12 +129,12 @@ inline ggml_backend_t make_backend(int cpu_threads = 0, const char* device = nul
                     for (ggml_backend_dev_t d : gpus) {
                         std::string name = ggml_backend_dev_name(d);
                         std::string desc = ggml_backend_dev_description(d);
-                        std::string hay = name + " " + desc, needle = sel;
+                        std::string hay = name + " " + desc, needle = gpu_selector;
                         for (char& c : hay)    c = (char)tolower((unsigned char)c);
                         for (char& c : needle) c = (char)tolower((unsigned char)c);
                         if (hay.find(needle) != std::string::npos) { chosen = d; break; }
                     }
-                    if (!chosen) fprintf(stderr, "[sa3] SA3_GPU='%s' matched no device; using default\n", sel);
+                    if (!chosen) fprintf(stderr, "[sa3] --gpu '%s' matched no device; using default\n", gpu_selector);
                 }
             }
             if (!chosen) {
@@ -185,7 +169,7 @@ inline ggml_backend_t make_backend(int cpu_threads = 0, const char* device = nul
     }
     ggml_backend_t b = ggml_backend_init_by_type(GGML_BACKEND_DEVICE_TYPE_CPU, nullptr);
     if (b) {
-        configure_cpu_threads(b, cpu_threads > 0 ? cpu_threads : cpu_threads_from_env());
+        configure_cpu_threads(b, cpu_threads > 0 ? cpu_threads : 0);
         ggml_backend_dev_t d = ggml_backend_get_device(b);
         if (d) {
             fprintf(stderr, "[sa3] backend: %s (%s)\n",

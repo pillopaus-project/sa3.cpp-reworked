@@ -9,22 +9,10 @@
 
 namespace sa3::nn {
 
-inline bool flash_attn_enabled() {
-    const char* p = getenv("SA3_FLASH_ATTN");
-    return p && strcmp(p, "0") != 0;
-}
-
-inline int same_flash_attn_mode() {
-    const char* p = getenv("SA3_SAME_FLASH_ATTN");
-    if (!p) return flash_attn_enabled() ? 1 : 0; // legacy global flag: full-mask flash
-    if (!strcmp(p, "0")) return 0;
-    if (!strcmp(p, "local") || !strcmp(p, "window") || !strcmp(p, "compact")) return 2;
-    return 1; // non-zero / "full"
-}
-
-inline bool same_flash_attn_enabled() {
-    return same_flash_attn_mode() != 0;
-}
+// Set by the CLI/server at startup from Sa3Config; the graph builders read these globals
+// instead of calling getenv(). Defaults: both off.
+inline int  g_same_flash_attn_mode = 0;  // 0=off, 1=full, 2=local
+inline bool g_flash_attn_enabled   = false;
 
 // DynamicTanh: y = tanh(alpha * x) * gamma + beta.
 // alpha is [1] (broadcast); gamma/beta are [ne0] (broadcast over the rest).
@@ -134,7 +122,7 @@ inline ggml_tensor* sdpa_flash_ext(ggml_context* ctx, ggml_tensor* q, ggml_tenso
 
 inline ggml_tensor* sdpa(ggml_context* ctx, ggml_tensor* q, ggml_tensor* k, ggml_tensor* v,
                          ggml_tensor* mask, float scale) {
-    if (flash_attn_enabled() && (!mask || mask->type == GGML_TYPE_F16)) {
+    if (g_flash_attn_enabled && (!mask || mask->type == GGML_TYPE_F16)) {
         return sdpa_flash_ext(ctx, q, k, v, mask, scale);
     }
     ggml_tensor* kq = ggml_mul_mat(ctx, k, q);                 // [Nk, Nq, H]

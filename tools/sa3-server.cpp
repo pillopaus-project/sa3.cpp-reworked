@@ -10,11 +10,12 @@
 //                     queue_status, audio_data (base64 wav, on "completed"), meta:{seed}}
 //   POST /unload   -> free the model (full VRAM release; orchestrator owns the unload policy)
 //   GET  /health   -> {status, model, encoding, loaded}
+//   GET  /config   -> server defaults (the web frontend fetches this on startup)
 // The Pipeline carries the reusable primitives (incl. GenParams::on_progress); a synchronous or SSE
 // transport is left to real apps — this server only demonstrates the poll_status pattern.
 #include "sa3_pipeline.h"
+#include "sa3_config.h"
 #include "embedded_web.h"
-#include "env.h"
 #include "wav.h"
 
 #include "httplib.h"
@@ -48,14 +49,9 @@ namespace {
 std::mutex g_mtx;                         // serialize: one generation (one GPU graph) at a time
 std::unique_ptr<sa3::Pipeline> g_pipe;    // loaded lazily on first generate; freed on /unload
 std::atomic<bool> g_loaded{false};        // lock-free view for /health (won't block during a gen)
-std::string g_variant   = "medium";
-std::string g_encoding  = "f16";
-std::string g_models_dir;
-std::string g_adapters_dir;
-std::string g_prompts_dir;
-std::string g_source_loras_dir;
-std::string g_audio_in_dir;
-int g_cpu_threads = 0;
+
+// Single source of truth for all config defaults (set from CLI flags at startup).
+Sa3Config cfg;
 
 // --- async job registry (mirrors gary4local /poll_status) ---
 struct Job {
@@ -230,13 +226,6 @@ struct LoraEntry {
     std::string path;
 };
 
-struct SourceLoraEntry {
-    std::string name;
-    std::string safetensors_path;
-    std::string ckpt_path;
-    std::string config_path;
-};
-
 std::vector<LoraEntry> scan_loras(const std::string& adapters_dir) {
     namespace fs = std::filesystem;
     std::vector<LoraEntry> out;
@@ -260,37 +249,6 @@ std::vector<LoraEntry> scan_loras(const std::string& adapters_dir) {
     return out;
 }
 
-std::vector<SourceLoraEntry> scan_source_loras(const std::string& source_dir) {
-    namespace fs = std::filesystem;
-    std::map<std::string, SourceLoraEntry> by_name;
-    std::error_code ec;
-    if (!fs::is_directory(source_dir, ec)) return {};
-
-    for (const auto& e : fs::directory_iterator(source_dir, ec)) {
-        if (ec) break;
-        if (!e.is_regular_file(ec)) continue;
-        const std::string ext = lower_ascii(e.path().extension().string());
-        if (ext != ".ckpt" && ext != ".safetensors" && ext != ".json") continue;
-
-        const std::string stem = e.path().stem().string();
-        auto& entry = by_name[stem];
-        entry.name = stem;
-        if (ext == ".ckpt") entry.ckpt_path = e.path().string();
-        else if (ext == ".safetensors") entry.safetensors_path = e.path().string();
-        else if (ext == ".json") entry.config_path = e.path().string();
-    }
-
-    std::vector<SourceLoraEntry> out;
-    for (auto& kv : by_name) {
-        if (kv.second.ckpt_path.empty() && kv.second.safetensors_path.empty()) continue;
-        out.push_back(std::move(kv.second));
-    }
-    std::sort(out.begin(), out.end(), [](const SourceLoraEntry& a, const SourceLoraEntry& b) {
-        return lower_ascii(a.name) < lower_ascii(b.name);
-    });
-    return out;
-}
-
 std::string json_string_array(const std::vector<std::string>& values) {
     std::string body = "[";
     for (size_t i = 0; i < values.size(); i++) {
@@ -308,20 +266,6 @@ std::string loras_json(const std::vector<LoraEntry>& loras) {
         body += "{\"index\":" + std::to_string(i)
              + ",\"name\":\"" + json_escape(loras[i].name)
              + "\",\"path\":\"" + json_escape(loras[i].path) + "\"}";
-    }
-    body += "]";
-    return body;
-}
-
-std::string source_loras_json(const std::vector<SourceLoraEntry>& loras) {
-    std::string body = "[";
-    for (size_t i = 0; i < loras.size(); i++) {
-        if (i) body += ",";
-        body += "{\"name\":\"" + json_escape(loras[i].name)
-             + "\",\"runnable\":false"
-             + ",\"safetensors_path\":\"" + json_escape(loras[i].safetensors_path)
-             + "\",\"ckpt_path\":\"" + json_escape(loras[i].ckpt_path)
-             + "\",\"config_path\":\"" + json_escape(loras[i].config_path) + "\"}";
     }
     body += "]";
     return body;
@@ -473,23 +417,13 @@ void jobs_prune() {
 bool ensure_loaded(std::string& err) {
     if (g_pipe && g_pipe->loaded()) { g_loaded = true; return true; }
     sa3::ModelPaths mp;
-    if (!sa3::ModelPaths::resolve(g_models_dir, g_variant, g_encoding, mp, err)) return false;
+    if (!sa3::ModelPaths::resolve(cfg.models_dir, cfg.model_variant, cfg.encoding, mp, err)) return false;
     try {
         g_pipe = std::make_unique<sa3::Pipeline>();
-        g_pipe->load(mp, g_cpu_threads);
+        g_pipe->load(mp, cfg.cpu_threads, cfg.device.empty() ? nullptr : cfg.device.c_str(), cfg.gpu_selector.empty() ? nullptr : cfg.gpu_selector.c_str());
     } catch (const std::exception& e) { g_pipe.reset(); g_loaded = false; err = e.what(); return false; }
     g_loaded = true;
     return true;
-}
-
-int env_int(const char* name, int fallback) {
-    const char* e = getenv(name);
-    return e && *e ? atoi(e) : fallback;
-}
-
-double env_double(const char* name, double fallback) {
-    const char* e = getenv(name);
-    return e && *e ? atof(e) : fallback;
 }
 
 bool valid_loop_bars(int bars) {
@@ -519,7 +453,7 @@ float extract_bpm_from_prompt(const std::string& prompt) {
 
 bool parse_generate_request(yyjson_val* root, const std::string& adir,
                             sa3::GenParams& params, uint64_t& seed_resolved,
-                            std::string& perr) {
+                            std::string& perr, const Sa3Config& cfg) {
     auto S = [&](const char* k, const char* d) { yyjson_val* v = yyjson_obj_get(root, k); return std::string(v && yyjson_is_str(v) ? yyjson_get_str(v) : d); };
     auto I = [&](const char* k, int d) {
         yyjson_val* v = yyjson_obj_get(root, k);
@@ -540,8 +474,8 @@ bool parse_generate_request(yyjson_val* root, const std::string& adir,
         perr = "HTTP API uses duration seconds; frames is CLI/internal";
         return false;
     }
-    const double max_duration = env_double("SA3_MAX_DURATION", 300.0);
-    const double duration = D("duration", env_double("SA3_DEFAULT_DURATION", 30.0));
+    const double max_duration = D("max_duration", cfg.max_duration);
+    const double duration = D("duration", cfg.duration);
     if (!std::isfinite(duration) || duration <= 0.0 || duration > max_duration) {
         perr = "duration must be in (0, " + json_num(max_duration) + "] seconds";
         return false;
@@ -552,24 +486,22 @@ bool parse_generate_request(yyjson_val* root, const std::string& adir,
         return false;
     }
     params.frames = frames_for_target_samples(duration_target_samples);
-    params.steps            = I("steps", 8);
+    params.steps            = I("steps", cfg.steps);
     seed_resolved           = sa3::pick_seed(I("seed", 0));   // seed -1 => random
     params.seed             = seed_resolved;
     params.keep_models      = B("keep_models", false);        // FRUGAL default
-    params.init_noise_level = (float)D("init_noise_level", 0.85);
+    params.init_noise_level = (float)D("init_noise_level", cfg.init_noise_level);
     params.inpaint_start    = (float)D("inpaint_start", -1.0);
     params.inpaint_end      = (float)D("inpaint_end", -1.0);
     params.duration_padding_sec = (float)D("duration_padding_sec", 6.0);
     params.target_n_samp    = I("target_samples", init_path.empty() ? duration_target_samples : 0);
-    // clamp to the requested canvas (frames*4096 samples); an unvalidated JSON int would
-    // otherwise drive a huge truncation-buffer alloc in Pipeline::generate. 0 = auto.
     if (params.target_n_samp < 0) params.target_n_samp = 0;
     else if (params.target_n_samp > params.frames * k_samples_per_latent_frame) params.target_n_samp = params.frames * k_samples_per_latent_frame;
     params.encode_chunk_size = I("encode_chunk_size", 0);
     params.encode_overlap    = I("encode_overlap", 32);
     params.decode_chunk_size = I("decode_chunk_size", 0);
     params.decode_overlap    = I("decode_overlap", 32);
-    params.loudness          = sa3::loudness_defaults_from_env();
+    params.loudness          = cfg.loudness;
 
     auto parse_json_float = [&](yyjson_val* v, float& out, const char* key) {
         if (!v) return true;
@@ -621,7 +553,7 @@ bool parse_generate_request(yyjson_val* root, const std::string& adir,
     sa3::normalize_loudness_params(params.loudness);
 
     params.negative_prompt   = S("negative_prompt", "");
-    params.cfg_scale         = (float)D("cfg_scale", 1.0);
+    params.cfg_scale         = (float)D("cfg_scale", cfg.cfg_scale);
     params.cfg_rescale       = (float)D("cfg_rescale", 0.0);
     params.apg_scale         = (float)D("apg_scale", 1.0);
     params.cfg_norm_threshold= (float)D("cfg_norm_threshold", 0.0);
@@ -668,7 +600,7 @@ bool parse_generate_request(yyjson_val* root, const std::string& adir,
             perr = std::string("invalid init_path WAV: ") + e.what();
             return false;
         }
-        params.init_n_samp = ns; params.init_n_ch = nc; params.init_sample_rate = sr;  // pipeline resamples
+        params.init_n_samp = ns; params.init_n_ch = nc; params.init_sample_rate = sr;
     }
 
     return true;
@@ -703,7 +635,7 @@ std::string queue_generation(sa3::GenParams params, uint64_t seed_resolved) {
             auto it = jobs.find(sid); if (it == jobs.end()) return;
             it->second.progress    = (int)(p.fraction * 100.0f);
             it->second.step        = p.step;
-            it->second.total_steps = p.total;   // per-phase total (was locked at the sampling-step count)
+            it->second.total_steps = p.total;
             if      (!strcmp(p.stage, "sampling")) it->second.status = "generating";
             else if (!strcmp(p.stage, "encoding")) it->second.status = "encoding";
             else if (!strcmp(p.stage, "decoding")) it->second.status = "decoding";
@@ -756,44 +688,87 @@ std::string queue_generation(sa3::GenParams params, uint64_t seed_resolved) {
     return sid;
 }
 
+std::string config_json(const Sa3Config& cfg) {
+    std::string body = "{";
+    body += "\"model_variant\":\"" + json_escape(cfg.model_variant) + "\"";
+    body += ",\"encoding\":\"" + json_escape(cfg.encoding) + "\"";
+    body += ",\"models_dir\":\"" + json_escape(cfg.models_dir) + "\"";
+    body += ",\"adapters_dir\":\"" + json_escape(cfg.adapters_dir) + "\"";
+    body += ",\"prompts_dir\":\"" + json_escape(cfg.prompts_dir) + "\"";
+    body += ",\"audio_in_dir\":\"" + json_escape(cfg.audio_in_dir) + "\"";
+    body += ",\"duration\":" + json_num(cfg.duration);
+    body += ",\"max_duration\":" + json_num(cfg.max_duration);
+    body += ",\"steps\":" + std::to_string(cfg.steps);
+    body += ",\"default_loop_bars\":" + std::to_string(cfg.default_loop_bars);
+    body += ",\"loop_pad_seconds\":" + json_num(cfg.loop_pad_seconds);
+    body += ",\"cfg_scale\":" + json_num(cfg.cfg_scale);
+    body += ",\"cfg_rescale\":" + json_num(cfg.cfg_rescale);
+    body += ",\"apg_scale\":" + json_num(cfg.apg_scale);
+    body += ",\"cfg_norm_threshold\":" + json_num(cfg.cfg_norm_threshold);
+    body += ",\"cfg_interval_min\":" + json_num(cfg.cfg_interval_min);
+    body += ",\"cfg_interval_max\":" + json_num(cfg.cfg_interval_max);
+    body += ",\"init_noise_level\":" + json_num(cfg.init_noise_level);
+    body += ",\"inpaint_start\":" + json_num(cfg.inpaint_start);
+    body += ",\"inpaint_end\":" + json_num(cfg.inpaint_end);
+    body += ",\"seed\":" + std::to_string(cfg.seed);
+    body += ",\"bpm\":" + json_num(cfg.bpm);
+    body += ",\"flash_attn\":" + std::to_string(cfg.flash_attn);
+    body += ",\"same_flash_attn_mode\":" + std::to_string(cfg.same_flash_attn_mode);
+    body += ",\"encode_chunk_size\":" + std::to_string(cfg.encode_chunk_size);
+    body += ",\"encode_overlap\":" + std::to_string(cfg.encode_overlap);
+    body += ",\"decode_chunk_size\":" + std::to_string(cfg.decode_chunk_size);
+    body += ",\"decode_overlap\":" + std::to_string(cfg.decode_overlap);
+    body += ",\"cpu_threads\":" + std::to_string(cfg.cpu_threads);
+    body += ",\"device\":\"" + json_escape(cfg.device) + "\"";
+    body += ",\"gpu_selector\":\"" + json_escape(cfg.gpu_selector) + "\"";
+    body += ",\"profile\":" + std::to_string(cfg.profile);
+    body += ",\"loudness\":" + loudness_params_json(cfg.loudness);
+    body += ",\"dist_shift_defaults\":{";
+    body += "\"LogSNR\":[2000,-6.2,0,2]";
+    body += ",\"Flux\":[256,4096,6.93,6.93]";
+    body += ",\"Full\":[0.5,1.15,256,4096]";
+    body += ",\"None\":[0,0,0,0]";
+    body += "}";
+    body += "}";
+    return body;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
-    sa3::load_dotenv();
-    std::string host = "127.0.0.1";
-    int port = 8006;
-    if (const char* e = getenv("SA3_MODELS_DIR"))   g_models_dir   = e;
-    if (const char* e = getenv("SA3_ADAPTERS_DIR")) g_adapters_dir = e;
-    if (const char* e = getenv("SA3_PROMPTS_DIR"))  g_prompts_dir  = e;
-    if (const char* e = getenv("SA3_SOURCE_LORAS_DIR")) g_source_loras_dir = e;
-    if (const char* e = getenv("SA3_AUDIO_IN_DIR"))    g_audio_in_dir = e;
-    if (g_models_dir.empty()) g_models_dir = "models";
-    if (g_prompts_dir.empty()) g_prompts_dir = "prompts";
-    if (g_source_loras_dir.empty()) g_source_loras_dir = "loras";
-    if (g_audio_in_dir.empty()) g_audio_in_dir = "audio-in";
-    bool threads_set = false;
+    std::string host = cfg.host;
+    int port = cfg.port;
+
+
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
-        auto next = [&](const char* d){ return i + 1 < argc ? argv[++i] : d; };
-        if      (a == "--host")         host = next("127.0.0.1");
-        else if (a == "--port")         port = atoi(next("8006"));
-        else if (a == "--model")        g_variant = next("medium");
-        else if (a == "--encoding")     g_encoding = next("f16");
-        else if (a == "--models-dir")   g_models_dir = next("models");
-        else if (a == "--adapters-dir") g_adapters_dir = next("");
-        else if (a == "--prompts-dir")  g_prompts_dir = next("prompts");
-        else if (a == "--source-loras-dir") g_source_loras_dir = next("loras");
-        else if (a == "--audio-in-dir")    g_audio_in_dir = next("audio-in");
-        else if (a == "--threads")      { g_cpu_threads = atoi(next("0")); threads_set = true; }
+        auto val = [&]{ return std::string(i + 1 < argc ? argv[++i] : ""); };
+        if (a == "--host")              { auto v = val(); if (!v.empty()) host = v; }
+        else if (a == "--port")         { auto v = val(); if (!v.empty()) port = atoi(v.c_str()); }
+        else if (a == "--model")        { auto v = val(); if (!v.empty()) cfg.model_variant = v; }
+        else if (a == "--encoding")     { auto v = val(); if (!v.empty()) cfg.encoding = v; }
+        else if (a == "--models-dir")   { auto v = val(); if (!v.empty()) cfg.models_dir = v; }
+        else if (a == "--adapters-dir") { auto v = val(); if (!v.empty()) cfg.adapters_dir = v; }
+        else if (a == "--prompts-dir")  { auto v = val(); if (!v.empty()) cfg.prompts_dir = v; }
+        else if (a == "--audio-in-dir") { auto v = val(); if (!v.empty()) cfg.audio_in_dir = v; }
+        else if (a == "--device")       { auto v = val(); if (!v.empty()) cfg.device = v; }
+        else if (a == "--gpu")          { auto v = val(); if (!v.empty()) cfg.gpu_selector = v; }
+        else if (a == "--threads")      { auto v = val(); if (!v.empty()) { cfg.cpu_threads = atoi(v.c_str()); if (cfg.cpu_threads <= 0) { fprintf(stderr, "--threads must be positive\n"); return 1; } } }
+        else if (a == "--flash-attn")   { auto v = val(); if (!v.empty()) cfg.flash_attn = atoi(v.c_str()); }
+        else if (a == "--same-flash-attn") { auto v = val(); if (!v.empty()) cfg.same_flash_attn_mode = atoi(v.c_str()); }
+        else if (a == "--profile")      { auto v = val(); if (!v.empty()) cfg.profile = atoi(v.c_str()); }
+        else if (a == "--dump-cond")    { auto v = val(); if (!v.empty()) cfg.dump_cond_dir = v; }
     }
-    if (threads_set && g_cpu_threads <= 0) {
-        fprintf(stderr, "--threads must be positive\n");
-        return 1;
-    }
-    const std::string adir = g_adapters_dir.empty() ? g_models_dir : g_adapters_dir;
-    const std::string pdir = g_prompts_dir;
-    const std::string sldir = g_source_loras_dir;
-    const std::string aidir = g_audio_in_dir;
+
+    // Apply config to library globals
+    sa3::nn::g_flash_attn_enabled = cfg.flash_attn != 0;
+    sa3::nn::g_same_flash_attn_mode = cfg.same_flash_attn_mode;
+    sa3::g_profile_enabled = cfg.profile != 0;
+    sa3::g_dump_cond_dir = cfg.dump_cond_dir;
+
+    const std::string adir = cfg.adapters_dir;
+    const std::string pdir = cfg.prompts_dir;
+    const std::string aidir = cfg.audio_in_dir;
 
     // create audio-in directory if it doesn't exist
     std::error_code ec;
@@ -803,20 +778,21 @@ int main(int argc, char** argv) {
     httplib::Server svr;
 
     svr.Get("/health", [](const httplib::Request&, httplib::Response& res) {
-        const bool loaded = g_loaded.load();   // atomic: never blocks behind an in-flight generation
-        std::string body = "{\"status\":\"ok\",\"model\":\"" + g_variant + "\",\"encoding\":\"" +
-                           g_encoding + "\",\"loaded\":" + (loaded ? "true" : "false") +
-                           ",\"loudness_defaults\":" + loudness_params_json(sa3::loudness_defaults_from_env()) + "}";
+        const bool loaded = g_loaded.load();
+        std::string body = "{\"status\":\"ok\",\"model\":\"" + cfg.model_variant + "\",\"encoding\":\"" +
+                           cfg.encoding + "\",\"loaded\":" + (loaded ? "true" : "false") +
+                           ",\"loudness_defaults\":" + loudness_params_json(cfg.loudness) + "}";
         res.set_content(body, "application/json");
     });
 
-    svr.Get("/loras", [&adir, &sldir](const httplib::Request&, httplib::Response& res) {
+    svr.Get("/config", [](const httplib::Request&, httplib::Response& res) {
+        res.set_content(config_json(cfg), "application/json");
+    });
+
+    svr.Get("/loras", [&adir](const httplib::Request&, httplib::Response& res) {
         const std::vector<LoraEntry> loras = scan_loras(adir);
-        const std::vector<SourceLoraEntry> source_loras = scan_source_loras(sldir);
         std::string body = "{\"success\":true,\"loras\":" + loras_json(loras)
-                         + ",\"source_loras\":" + source_loras_json(source_loras)
                          + ",\"adapters_dir\":\"" + json_escape(adir)
-                         + "\",\"source_loras_dir\":\"" + json_escape(sldir)
                          + "\",\"model_loaded\":" + (g_loaded.load() ? "true" : "false") + "}";
         res.set_content(body, "application/json");
     });
@@ -867,13 +843,11 @@ int main(int argc, char** argv) {
 
     svr.Post("/unload", [](const httplib::Request&, httplib::Response& res) {
         std::lock_guard<std::mutex> lk(g_mtx);
-        g_pipe.reset();   // Pipeline dtor frees nets + backend (full VRAM release)
+        g_pipe.reset();
         g_loaded = false;
         res.set_content("{\"status\":\"unloaded\"}", "application/json");
     });
 
-    // POST /generate: parse + validate on the request thread, then run the generation on a background
-    // thread and return {session_id} immediately. The client polls /poll_status/<session_id>.
     svr.Post("/generate", [&adir](const httplib::Request& req, httplib::Response& res) {
         yyjson_doc* doc = yyjson_read(req.body.c_str(), req.body.size(), 0);
         if (!doc) { res.status = 400; res.set_content(json_err("invalid json"), "application/json"); return; }
@@ -882,7 +856,7 @@ int main(int argc, char** argv) {
         sa3::GenParams params;
         uint64_t seed_resolved = 0;
         std::string perr;
-        if (!parse_generate_request(root, adir, params, seed_resolved, perr)) {
+        if (!parse_generate_request(root, adir, params, seed_resolved, perr, cfg)) {
             yyjson_doc_free(doc);
             res.status = 400; res.set_content(json_err(perr), "application/json"); return;
         }
@@ -892,8 +866,6 @@ int main(int argc, char** argv) {
         res.set_content("{\"success\":true,\"session_id\":\"" + sid + "\",\"seed\":" + std::to_string(seed_resolved) + "}", "application/json");
     });
 
-    // POST /generate/loop: Gary-compatible loop mode. The model gets a short padded generation canvas,
-    // then the result is trimmed to the exact requested bar length.
     svr.Post("/generate/loop", [&adir](const httplib::Request& req, httplib::Response& res) {
         yyjson_doc* doc = yyjson_read(req.body.c_str(), req.body.size(), 0);
         if (!doc) { res.status = 400; res.set_content(json_err("invalid json"), "application/json"); return; }
@@ -905,22 +877,28 @@ int main(int argc, char** argv) {
             return d;
         };
 
+        auto D = [&](const char* k, double d) {
+            yyjson_val* v = yyjson_obj_get(root, k);
+            return v && yyjson_is_num(v) ? yyjson_get_num(v) : d;
+        };
+
         sa3::GenParams params;
         uint64_t seed_resolved = 0;
         std::string perr;
-        if (!parse_generate_request(root, adir, params, seed_resolved, perr)) {
+        if (!parse_generate_request(root, adir, params, seed_resolved, perr, cfg)) {
             yyjson_doc_free(doc);
             res.status = 400; res.set_content(json_err(perr), "application/json"); return;
         }
 
-        float bpm = 0.0f;
+        float bpm = (float)cfg.bpm;
         if (yyjson_val* bv = yyjson_obj_get(root, "bpm")) {
             if (yyjson_is_num(bv)) bpm = (float)yyjson_get_num(bv);
             else if (yyjson_is_str(bv)) sa3::parse_float_text(yyjson_get_str(bv), bpm);
         }
         if (bpm <= 0.0f) bpm = extract_bpm_from_prompt(params.prompt);
 
-        const int bars = I("bars", env_int("SA3_DEFAULT_LOOP_BARS", 8));
+        const double loop_pad = D("loop_pad_seconds", cfg.loop_pad_seconds);
+        const int bars = I("bars", cfg.default_loop_bars);
         yyjson_doc_free(doc);
 
         if (bpm <= 0.0f) {
@@ -932,8 +910,8 @@ int main(int argc, char** argv) {
 
         const double seconds_per_bar = (60.0 / (double)bpm) * 4.0;
         const double loop_duration = seconds_per_bar * (double)bars;
-        const double gen_duration = loop_duration + env_double("SA3_LOOP_PAD_SECONDS", 2.0);
-        const double max_duration = env_double("SA3_MAX_DURATION", 300.0);
+        const double gen_duration = loop_duration + loop_pad;
+        const double max_duration = D("max_duration", cfg.max_duration);
         if (gen_duration > max_duration) {
             res.status = 400;
             res.set_content(json_err(std::to_string(bars) + " bars at " + json_num(bpm) + " bpm exceeds max " + json_num(max_duration) + "s with pad"), "application/json");
@@ -963,7 +941,6 @@ int main(int argc, char** argv) {
         res.set_content(body, "application/json");
     });
 
-    // GET /poll_status/<session_id>: progress + (on completion) the base64 wav. Matches gary4local.
     svr.Get(R"(/poll_status/(.+))", [](const httplib::Request& req, httplib::Response& res) {
         const std::string sid = req.matches[1];
         const bool consume = req.has_param("consume") && req.get_param_value("consume") != "0";
@@ -1027,7 +1004,6 @@ int main(int argc, char** argv) {
         res.set_content(body, "application/json");
     });
 
-    // POST /cancel/<session_id>: cooperative cancel — sets a flag the pipeline polls between steps.
     svr.Post(R"(/cancel/(.+))", [](const httplib::Request& req, httplib::Response& res) {
         const std::string sid = req.matches[1];
         std::lock_guard<std::mutex> lk(jobs_mtx);
@@ -1043,7 +1019,6 @@ int main(int argc, char** argv) {
         res.set_content("{\"success\":true}", "application/json");
     });
 
-    // GET /audio-in: list WAV files in the audio-in directory
     svr.Get("/audio-in", [&aidir](const httplib::Request&, httplib::Response& res) {
         namespace fs = std::filesystem;
         std::string body = "{\"success\":true,\"files\":[";
@@ -1052,7 +1027,6 @@ int main(int argc, char** argv) {
             for (const auto& entry : fs::directory_iterator(aidir)) {
                 if (!entry.is_regular_file()) continue;
                 std::string ext = entry.path().extension().string();
-                // case-insensitive .wav check
                 for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
                 if (ext != ".wav") continue;
                 if (!first) body += ",";
@@ -1064,7 +1038,6 @@ int main(int argc, char** argv) {
         res.set_content(body, "application/json");
     });
 
-    // POST /upload: upload a WAV file to the audio-in directory
     svr.Post("/upload", [&aidir](const httplib::Request& req, httplib::Response& res) {
         if (!req.form.has_file("file")) {
             res.status = 400;
@@ -1073,17 +1046,14 @@ int main(int argc, char** argv) {
         }
         const auto& file = req.form.get_file("file");
         std::string filename = file.filename;
-        // sanitize: strip path components
         if (auto pos = filename.find_last_of("/\\"); pos != std::string::npos)
             filename = filename.substr(pos + 1);
-        // reject directory traversal
         if (filename.empty() || filename == "." || filename == ".." ||
             filename.find("..") != std::string::npos) {
             res.status = 400;
             res.set_content("{\"success\":false,\"error\":\"invalid filename\"}", "application/json");
             return;
         }
-        // require .wav extension
         {
             std::string ext = filename;
             auto dot = ext.rfind('.');
@@ -1108,7 +1078,6 @@ int main(int argc, char** argv) {
         res.set_content("{\"success\":true,\"filename\":\"" + json_escape(filename) + "\"}", "application/json");
     });
 
-    // GET /: embedded web UI (generated from web/ by tools/gen_embedded_web.py).
     svr.Get("/", [](const httplib::Request&, httplib::Response& res) {
         res.set_content(embedded_web::index_html, "text/html");
     });
@@ -1116,8 +1085,8 @@ int main(int argc, char** argv) {
         res.set_content(embedded_web::app_js, "application/javascript");
     });
 
-    fprintf(stderr, "[sa3-server] http://%s:%d  model=%s/%s  models=%s  adapters=%s  source_loras=%s  prompts=%s  audio-in=%s  (async /poll_status; frugal default)\n",
-            host.c_str(), port, g_variant.c_str(), g_encoding.c_str(), g_models_dir.c_str(), adir.c_str(), sldir.c_str(), pdir.c_str(), aidir.c_str());
+    fprintf(stderr, "[sa3-server] http://%s:%d  model=%s/%s  models=%s  adapters=%s  prompts=%s  audio-in=%s  (async /poll_status; frugal default)\n",
+            host.c_str(), port, cfg.model_variant.c_str(), cfg.encoding.c_str(), cfg.models_dir.c_str(), adir.c_str(), pdir.c_str(), aidir.c_str());
     if (!svr.listen(host.c_str(), port)) {
         fprintf(stderr, "[sa3-server] failed to bind %s:%d\n", host.c_str(), port);
         return 1;

@@ -29,7 +29,7 @@ extern "C" {
 typedef struct sa3_context sa3_context;
 
 /* Model set + backend selection. Any NULL string falls back to a default:
- *   models_dir   -> $SA3_MODELS_DIR, else "models"
+ *   models_dir   -> "models"
  *   adapters_dir -> models_dir
  *   variant      -> "medium"   ("medium" | "small-music" | "small-sfx")
  *   encoding     -> "f16"      ("f16" | "f32")                                                    */
@@ -41,8 +41,8 @@ typedef struct {
 } sa3_config;
 
 /* Extended init options. Keeps the original sa3_config layout intact for existing callers.
- * cpu_threads: 0 -> SA3_THREADS/default; >0 sets ggml CPU backend threads for this context.
- * device: NULL/"" -> SA3_DEVICE env then GPU-if-available; "cpu" -> force CPU backend. */
+ * cpu_threads: 0 -> default; >0 sets ggml CPU backend threads for this context.
+ * device: NULL/"" -> GPU-if-available; "cpu" -> force CPU backend. */
 typedef struct {
     sa3_config config;
     int cpu_threads;

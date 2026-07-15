@@ -161,26 +161,26 @@ inline const char* index_html = R"sa3web(
     <div>
       <label for="duration">Duration (seconds)</label>
       <div class="range-row">
-        <input id="duration" type="range" min="1" max="300" value="30" step="0.5">
-        <input id="duration-num" type="number" min="1" max="300" value="30" step="0.5">
+        <input id="duration" type="range" min="1" max="300" step="0.5">
+        <input id="duration-num" type="number" min="1" max="300" step="0.5">
       </div>
     </div>
     <div>
       <label for="steps">Sampling Steps</label>
       <div class="range-row">
-        <input id="steps" type="range" min="1" max="100" value="8" step="1">
-        <input id="steps-num" type="number" min="1" max="100" value="8" step="1">
+        <input id="steps" type="range" min="1" max="100" step="1">
+        <input id="steps-num" type="number" min="1" max="100" step="1">
       </div>
     </div>
     <div>
       <label for="seed">Seed (<span style="color:var(--muted)">-1 = random</span>)</label>
-      <input id="seed" type="number" value="-1">
+      <input id="seed" type="number">
     </div>
     <div>
       <label for="duration-padding">Duration Padding (s)</label>
       <div class="range-row">
-        <input id="duration-padding" type="range" min="0" max="30" value="6" step="0.5">
-        <input id="duration-padding-num" type="number" min="0" max="30" value="6" step="0.5">
+        <input id="duration-padding" type="range" min="0" max="30" step="0.5">
+        <input id="duration-padding-num" type="number" min="0" max="30" step="0.5">
       </div>
     </div>
   </div>
@@ -193,12 +193,12 @@ inline const char* index_html = R"sa3web(
   <button class="collapse-toggle" data-target="cfg-section" type="button">Classifier-Free Guidance</button>
   <div id="cfg-section" class="collapse-body">
     <div class="param-grid" style="margin-top:10px">
-      <div><label for="cfg-scale">CFG Scale</label><input id="cfg-scale" type="number" value="1.0" step="0.1" min="0"></div>
-      <div><label for="cfg-rescale">CFG Rescale</label><input id="cfg-rescale" type="number" value="0.0" step="0.05" min="0" max="1"></div>
-      <div><label for="apg-scale">APG Scale</label><input id="apg-scale" type="number" value="1.0" step="0.05" min="0" max="1"></div>
-      <div><label for="cfg-norm-threshold">CFG Norm Threshold</label><input id="cfg-norm-threshold" type="number" value="0.0" step="0.1" min="0"></div>
-      <div><label for="cfg-interval-min">CFG Interval Min</label><input id="cfg-interval-min" type="number" value="0.0" step="0.05" min="0" max="1"></div>
-      <div><label for="cfg-interval-max">CFG Interval Max</label><input id="cfg-interval-max" type="number" value="1.0" step="0.05" min="0" max="1"></div>
+      <div><label for="cfg-scale">CFG Scale</label><input id="cfg-scale" type="number" step="0.1" min="0"></div>
+      <div><label for="cfg-rescale">CFG Rescale</label><input id="cfg-rescale" type="number" step="0.05" min="0" max="1"></div>
+      <div><label for="apg-scale">APG Scale</label><input id="apg-scale" type="number" step="0.05" min="0" max="1"></div>
+      <div><label for="cfg-norm-threshold">CFG Norm Threshold</label><input id="cfg-norm-threshold" type="number" step="0.1" min="0"></div>
+      <div><label for="cfg-interval-min">CFG Interval Min</label><input id="cfg-interval-min" type="number" step="0.05" min="0" max="1"></div>
+      <div><label for="cfg-interval-max">CFG Interval Max</label><input id="cfg-interval-max" type="number" step="0.05" min="0" max="1"></div>
     </div>
   </div>
 </div>
@@ -216,10 +216,10 @@ inline const char* index_html = R"sa3web(
           <option value="None">None</option>
         </select>
       </div>
-      <div class="col"><label for="dsp1">p1</label><input id="dsp1" type="number" value="2000" step="any"></div>
-      <div class="col"><label for="dsp2">p2</label><input id="dsp2" type="number" value="-6.2" step="any"></div>
-      <div class="col"><label for="dsp3">p3</label><input id="dsp3" type="number" value="0" step="any"></div>
-      <div class="col"><label for="dsp4">p4</label><input id="dsp4" type="number" value="2" step="any"></div>
+      <div class="col"><label for="dsp1">p1</label><input id="dsp1" type="number" step="any"></div>
+      <div class="col"><label for="dsp2">p2</label><input id="dsp2" type="number" step="any"></div>
+      <div class="col"><label for="dsp3">p3</label><input id="dsp3" type="number" step="any"></div>
+      <div class="col"><label for="dsp4">p4</label><input id="dsp4" type="number" step="any"></div>
     </div>
     <div class="small-note">Params auto-fill per-type defaults. Edit to override.</div>
   </div>
@@ -229,10 +229,10 @@ inline const char* index_html = R"sa3web(
   <button class="collapse-toggle" data-target="chunk-section" type="button">Chunked SAME Encode/Decode</button>
   <div id="chunk-section" class="collapse-body">
     <div class="param-grid" style="margin-top:10px">
-      <div><label for="encode-chunk-size">Encode Chunk Size</label><input id="encode-chunk-size" type="number" value="0" min="0" step="1"></div>
-      <div><label for="encode-overlap">Encode Overlap</label><input id="encode-overlap" type="number" value="32" min="0" step="1"></div>
-      <div><label for="decode-chunk-size">Decode Chunk Size</label><input id="decode-chunk-size" type="number" value="0" min="0" step="1"></div>
-      <div><label for="decode-overlap">Decode Overlap</label><input id="decode-overlap" type="number" value="32" min="0" step="1"></div>
+      <div><label for="encode-chunk-size">Encode Chunk Size</label><input id="encode-chunk-size" type="number" min="0" step="1"></div>
+      <div><label for="encode-overlap">Encode Overlap</label><input id="encode-overlap" type="number" min="0" step="1"></div>
+      <div><label for="decode-chunk-size">Decode Chunk Size</label><input id="decode-chunk-size" type="number" min="0" step="1"></div>
+      <div><label for="decode-overlap">Decode Overlap</label><input id="decode-overlap" type="number" min="0" step="1"></div>
     </div>
     <div class="small-note">0 = monolithic. Overlap must be &lt; chunk size when chunk size &gt; 0.</div>
   </div>
@@ -242,14 +242,14 @@ inline const char* index_html = R"sa3web(
   <button class="collapse-toggle" data-target="loud-section" type="button">Loudness / Output Processing</button>
   <div id="loud-section" class="collapse-body">
     <div class="param-grid" style="margin-top:10px">
-      <div><label for="latent-rescale">Latent Rescale</label><input id="latent-rescale" type="number" value="1.0" step="0.05" min="0"></div>
-      <div><label for="latent-shift">Latent Shift</label><input id="latent-shift" type="number" value="0.0" step="0.05"></div>
-      <div><label for="latent-target-std">Latent Target Std <span class="small-note">(blank=off)</span></label><input id="latent-target-std" type="number" value="" step="0.05" min="0" placeholder="off"></div>
-      <div><label for="latent-adapt-min">Adapt Min</label><input id="latent-adapt-min" type="number" value="0.9" step="0.05" min="0"></div>
-      <div><label for="latent-adapt-max">Adapt Max</label><input id="latent-adapt-max" type="number" value="1.0" step="0.05" min="0"></div>
-      <div><label for="peak-normalize-db">Peak Normalize dB <span class="small-note">(blank=off)</span></label><input id="peak-normalize-db" type="number" value="2.0" step="0.5" placeholder="off"></div>
-      <div><label for="limiter-ceiling-db">Limiter Ceiling dB <span class="small-note">(blank=off)</span></label><input id="limiter-ceiling-db" type="number" value="-0.3" step="0.1" placeholder="off"></div>
-      <div><label for="limiter-knee">Limiter Knee</label><input id="limiter-knee" type="number" value="0.8" step="0.05" min="0" max="1"></div>
+      <div><label for="latent-rescale">Latent Rescale</label><input id="latent-rescale" type="number" step="0.05" min="0"></div>
+      <div><label for="latent-shift">Latent Shift</label><input id="latent-shift" type="number" step="0.05"></div>
+      <div><label for="latent-target-std">Latent Target Std <span class="small-note">(blank=off)</span></label><input id="latent-target-std" type="number" step="0.05" min="0" placeholder="off"></div>
+      <div><label for="latent-adapt-min">Adapt Min</label><input id="latent-adapt-min" type="number" step="0.05" min="0"></div>
+      <div><label for="latent-adapt-max">Adapt Max</label><input id="latent-adapt-max" type="number" step="0.05" min="0"></div>
+      <div><label for="peak-normalize-db">Peak Normalize dB <span class="small-note">(blank=off)</span></label><input id="peak-normalize-db" type="number" step="0.5" placeholder="off"></div>
+      <div><label for="limiter-ceiling-db">Limiter Ceiling dB <span class="small-note">(blank=off)</span></label><input id="limiter-ceiling-db" type="number" step="0.1" placeholder="off"></div>
+      <div><label for="limiter-knee">Limiter Knee</label><input id="limiter-knee" type="number" step="0.05" min="0" max="1"></div>
     </div>
   </div>
 </div>
@@ -285,9 +285,9 @@ inline const char* index_html = R"sa3web(
       </div>
     </div>
     <input id="init-path" type="hidden" value="">
-    <div><label for="init-noise-level">Init Noise Level</label><input id="init-noise-level" type="number" value="0.85" step="0.05" min="0" max="1"></div>
-    <div><label for="inpaint-start">Inpaint Start (s)</label><input id="inpaint-start" type="number" value="-1" step="0.5"></div>
-    <div><label for="inpaint-end">Inpaint End (s)</label><input id="inpaint-end" type="number" value="-1" step="0.5"></div>
+    <div><label for="init-noise-level">Init Noise Level</label><input id="init-noise-level" type="number" step="0.05" min="0" max="1"></div>
+    <div><label for="inpaint-start">Inpaint Start (s)</label><input id="inpaint-start" type="number" step="0.5"></div>
+    <div><label for="inpaint-end">Inpaint End (s)</label><input id="inpaint-end" type="number" step="0.5"></div>
   </div>
   <div class="small-note">Set inpaint_start >= 0 to enable inpainting (requires init audio + local-cond DiT). -1 = disabled.</div>
 </div>
@@ -300,7 +300,7 @@ inline const char* index_html = R"sa3web(
       <label for="lora-select">Name</label>
       <div class="row" style="gap:6px">
         <select id="lora-select" style="flex:1"></select>
-        <input id="lora-strength" type="number" value="1.0" step="0.05" min="0" style="width:70px" placeholder="str">
+        <input id="lora-strength" type="number" step="0.05" min="0" style="width:70px" placeholder="str">
         <button id="lora-add-btn" class="small">Add</button>
       </div>
     </div>
@@ -319,7 +319,7 @@ inline const char* index_html = R"sa3web(
     </div>
   </div>
   <div class="row gapped" style="margin-top:8px">
-    <div class="col" style="flex:0 0 100px"><label for="loop-bpm">BPM</label><input id="loop-bpm" type="number" value="120" min="20" max="300"></div>
+    <div class="col" style="flex:0 0 100px"><label for="loop-bpm">BPM</label><input id="loop-bpm" type="number" min="20" max="300"></div>
     <div class="col" style="flex:0 0 100px"><label for="loop-bars">Bars</label><select id="loop-bars"><option>4</option><option selected>8</option><option>16</option><option>32</option></select></div>
     <div class="col"><div class="small-note" style="margin-top:20px">Ctrl+Enter to generate</div></div>
   </div>
@@ -359,13 +359,7 @@ inline const char* app_js = R"sa3web(
 // ─── Types matching the sa3-server HTTP API ────────────────────────────────
 let currentConfigFilename = "";
 const CONFIG_EXT = ".json";
-// ─── Dist-shift default profiles ───────────────────────────────────────────
-const DIST_SHIFT_DEFAULTS = {
-    LogSNR: [2000, -6.2, 0, 2],
-    Flux: [256, 4096, 6.93, 6.93],
-    Full: [0.5, 1.15, 256, 4096],
-    None: [0, 0, 0, 0],
-};
+// ─── Dist-shift labels (param meanings per type) ───────────────────────────
 const DIST_SHIFT_LABELS = {
     LogSNR: ["anchor_length", "anchor_logsnr", "rate", "logsnr_end"],
     Flux: ["min_length", "max_length", "alpha_min", "alpha_max"],
@@ -374,6 +368,7 @@ const DIST_SHIFT_LABELS = {
 };
 // ─── State ──────────────────────────────────────────────────────────────────
 const server = { host: "127.0.0.1", port: 8006 };
+let configDefaults = null;
 let loraList = [];
 let activeLoras = [];
 let currentSessionId = null;
@@ -497,6 +492,55 @@ async function checkHealth() {
         modelInfo.style.display = "none";
     }
 }
+// ─── Config fetch (populate defaults from server) ───────────────────────────
+
+async function fetchConfig() {
+    try {
+        configDefaults = await apiGet("/config");
+        applyConfigDefaults();
+    } catch {
+        // server not connected yet
+    }
+}
+
+function applyConfigDefaults() {
+    if (!configDefaults) return;
+    const c = configDefaults;
+    setVal("#duration", c.duration);
+    setVal("#duration-num", c.duration);
+    setVal("#steps", c.steps);
+    setVal("#steps-num", c.steps);
+    setVal("#duration-padding", c.loop_pad_seconds);
+    setVal("#duration-padding-num", c.loop_pad_seconds);
+    setVal("#cfg-scale", c.cfg_scale);
+    setVal("#cfg-rescale", c.cfg_rescale);
+    setVal("#apg-scale", c.apg_scale);
+    setVal("#cfg-norm-threshold", c.cfg_norm_threshold);
+    setVal("#cfg-interval-min", c.cfg_interval_min);
+    setVal("#cfg-interval-max", c.cfg_interval_max);
+    setVal("#init-noise-level", c.init_noise_level);
+    setVal("#loop-bpm", c.bpm);
+    setVal("#encode-chunk-size", c.encode_chunk_size);
+    setVal("#encode-overlap", c.encode_overlap);
+    setVal("#decode-chunk-size", c.decode_chunk_size);
+    setVal("#decode-overlap", c.decode_overlap);
+    setVal("#inpaint-start", c.inpaint_start);
+    setVal("#inpaint-end", c.inpaint_end);
+    setVal("#seed", c.seed);
+    if (c.loudness) {
+        const l = c.loudness;
+        if (l.latent_rescale != null) setVal("#latent-rescale", l.latent_rescale);
+        if (l.latent_shift != null) setVal("#latent-shift", l.latent_shift);
+        if (l.latent_target_std != null) setVal("#latent-target-std", l.latent_target_std);
+        if (l.latent_adapt_min != null) setVal("#latent-adapt-min", l.latent_adapt_min);
+        if (l.latent_adapt_max != null) setVal("#latent-adapt-max", l.latent_adapt_max);
+        if (l.peak_normalize_db != null) setVal("#peak-normalize-db", l.peak_normalize_db);
+        if (l.limiter_ceiling_db != null) setVal("#limiter-ceiling-db", l.limiter_ceiling_db);
+        if (l.limiter_knee != null) setVal("#limiter-knee", l.limiter_knee);
+    }
+    onDistShiftChange();
+}
+
 // ─── Loras ──────────────────────────────────────────────────────────────────
 async function loadLoras() {
     try {
@@ -617,7 +661,7 @@ async function uploadAudioFile() {
 function onDistShiftChange() {
     const type = val("#dist-shift");
     const labels = DIST_SHIFT_LABELS[type] || ["p1", "p2", "p3", "p4"];
-    const defaults = DIST_SHIFT_DEFAULTS[type] || [0, 0, 0, 0];
+    const defaults = (configDefaults && configDefaults.dist_shift_defaults && configDefaults.dist_shift_defaults[type]) || [0, 0, 0, 0];
     for (let i = 0; i < 4; i++) {
         const input = $(`#dsp${i + 1}`);
         const label = document.querySelector(`label[for="dsp${i + 1}"]`);
@@ -1220,6 +1264,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     // Auto-connect to server on page load
     checkHealth();
+    fetchConfig();
 });
 
 )sa3web";

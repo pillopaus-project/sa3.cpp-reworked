@@ -191,13 +191,10 @@ inline double wall_time_s() {
     return std::chrono::duration<double>(clock::now().time_since_epoch()).count();
 }
 
-inline bool profile_enabled() {
-    const char* p = getenv("SA3_PROFILE");
-    return p && strcmp(p, "0") != 0;
-}
+inline bool g_profile_enabled = false;
 
-inline void profile_log(bool enabled, const char* label, double seconds) {
-    if (enabled) fprintf(stderr, "[sa3-profile] %-18s %8.3f ms\n", label, seconds * 1000.0);
+inline void profile_log(const char* label, double seconds) {
+    if (g_profile_enabled) fprintf(stderr, "[sa3-profile] %-18s %8.3f ms\n", label, seconds * 1000.0);
 }
 
 inline std::vector<float> tensor_to_host(const GgufModel& M, const std::string& name) {
@@ -370,9 +367,9 @@ struct GenParams {
     float cfg_norm_threshold = 0.0f;  // >0 clamps the guidance-delta L2 norm
 
     // Long-audio SAME autoencoder tiling; 0 = monolithic (the sliding-window AE is already linear).
-    int encode_chunk_size = 0;
+    int encode_chunk_size = 512;
     int encode_overlap    = 32;
-    int decode_chunk_size = 0;
+    int decode_chunk_size = 512;
     int decode_overlap    = 32;
 
     // Output safety / optional latent experiments. Defaults mirror gary4local: leave latents alone,
@@ -413,9 +410,10 @@ public:
     Pipeline& operator=(const Pipeline&) = delete;
 
     // Load all nets onto one shared backend. device selects it (nullptr/empty ->
-    // GPU if available, else CPU; "cpu" forces CPU; SA3_DEVICE env is the fallback).
+    // GPU if available, else CPU; "cpu" forces CPU).
+    // gpu_selector narrows GPU choice by index or name substring (nullptr = auto).
     // Throws std::runtime_error on a missing/!@#$ file. Idempotent guard: load() once per Pipeline.
-    void load(const ModelPaths& paths, int cpu_threads = 0, const char* device = nullptr);
+    void load(const ModelPaths& paths, int cpu_threads = 0, const char* device = nullptr, const char* gpu_selector = nullptr);
     bool loaded() const { return loaded_; }
 
     // Run one generation. At entry it (re)loads any net a prior frugal (keep_models=false) call freed,
@@ -443,10 +441,10 @@ private:
 
 // ---- Pipeline implementation (header-only) ----
 
-inline void Pipeline::load(const ModelPaths& paths, int cpu_threads, const char* device) {
+inline void Pipeline::load(const ModelPaths& paths, int cpu_threads, const char* device, const char* gpu_selector) {
     if (loaded_) return;
     paths_ = paths;
-    backend_ = make_backend(cpu_threads, device);
+    backend_ = make_backend(cpu_threads, device, gpu_selector);
     tok_ = Tokenizer::load(paths_.tok.c_str());
 
     // Load each model ONE AT A TIME to read config, then free GPU memory immediately.
@@ -491,8 +489,9 @@ inline Pipeline& Pipeline::operator=(Pipeline&& o) noexcept {
     return *this;
 }
 
+inline std::string g_dump_cond_dir;   // empty = disabled; set by CLI/server from --dump-cond
+
 inline GenResult Pipeline::generate(const GenParams& params) {
-    const bool prof = profile_enabled();
     throw_if_cancelled(params.should_cancel);
 
     // Per-phase lazy loading: load only the model needed at each stage, free when done.
@@ -551,11 +550,11 @@ inline GenResult Pipeline::generate(const GenParams& params) {
         (decode_chunk_size > 0 && decode_overlap >= decode_chunk_size))
         throw std::runtime_error("invalid decode_chunk_size/decode_overlap");
 
-    int same_l_flash_mode = sc.chunk ? 0 : nn::same_flash_attn_mode();
+    int same_l_flash_mode = sc.chunk ? 0 : nn::g_same_flash_attn_mode;
     if (same_l_flash_mode == 2) {
         const char* bn = ggml_backend_name(shared_backend);
         if (bn && (strstr(bn, "CUDA") || strstr(bn, "ROCm") || strstr(bn, "HIP"))) {
-            fprintf(stderr, "[sa3] SA3_SAME_FLASH_ATTN=local is unsupported on %s; falling back to full\n", bn);
+            fprintf(stderr, "[sa3] --same-flash-attn=local is unsupported on %s; falling back to full\n", bn);
             same_l_flash_mode = 1;
         }
     }
@@ -664,11 +663,11 @@ inline GenResult Pipeline::generate(const GenParams& params) {
         ggml_set_output(h);
         ggml_cgraph* gf = ggml_new_graph_custom(ctx, 8192, false);
         ggml_build_forward_expand(gf, h);
-        profile_log(prof, "t5_build", wall_time_s() - tp);
+        profile_log( "t5_build", wall_time_s() - tp);
         tp = wall_time_s();
         ggml_gallocr_t alloc = ggml_gallocr_new(ggml_backend_get_default_buffer_type(TE.backend));
         ggml_gallocr_alloc_graph(alloc, gf);
-        profile_log(prof, "t5_alloc", wall_time_s() - tp);
+        profile_log( "t5_alloc", wall_time_s() - tp);
         tp = wall_time_s();
         ggml_backend_tensor_set(ids_t, ids_v.data(), 0, max_len*sizeof(int32_t));
         std::vector<int32_t> pos(max_len); for (int i = 0; i < max_len; i++) pos[i] = i;
@@ -677,15 +676,15 @@ inline GenResult Pipeline::generate(const GenParams& params) {
         for (int q = 0; q < max_len; q++) for (int k = 0; k < max_len; k++)
             mb[(size_t)q*max_len+k] = attn_v[k] ? 0.0f : -INFINITY;
         ggml_backend_tensor_set(mask_t, mb.data(), 0, mb.size()*sizeof(float));
-        profile_log(prof, "t5_upload", wall_time_s() - tp);
+        profile_log( "t5_upload", wall_time_s() - tp);
         tp = wall_time_s();
         ggml_backend_graph_compute(TE.backend, gf);
-        profile_log(prof, "t5_compute", wall_time_s() - tp);
+        profile_log( "t5_compute", wall_time_s() - tp);
         tp = wall_time_s();
         ggml_backend_tensor_get(h, hidden.data(), 0, hidden.size()*sizeof(float));
-        profile_log(prof, "t5_download", wall_time_s() - tp);
+        profile_log( "t5_download", wall_time_s() - tp);
         ggml_gallocr_free(alloc); ggml_free(ctx);
-        profile_log(prof, "t5_total", wall_time_s() - t_t5_total);
+        profile_log( "t5_total", wall_time_s() - t_t5_total);
         return hidden;
     };
 
@@ -734,13 +733,13 @@ inline GenResult Pipeline::generate(const GenParams& params) {
             uncond_crossb.assign((size_t)cond_dim*ctx_len, 0.0f);
         }
     }
-    if (const char* dc_dir = getenv("SA3_DUMP_COND")) {
-        FILE* f1 = fopen((std::string(dc_dir)+"/gen_cross.f32").c_str(), "wb");
+    if (!g_dump_cond_dir.empty()) {
+        FILE* f1 = fopen((g_dump_cond_dir+"/gen_cross.f32").c_str(), "wb");
         fwrite(crossb.data(), sizeof(float), crossb.size(), f1); fclose(f1);
-        FILE* f2 = fopen((std::string(dc_dir)+"/gen_global.f32").c_str(), "wb");
+        FILE* f2 = fopen((g_dump_cond_dir+"/gen_global.f32").c_str(), "wb");
         fwrite(globb.data(), sizeof(float), globb.size(), f2); fclose(f2);
     }
-    profile_log(prof, "conditioning", wall_time_s() - t0);
+    profile_log( "conditioning", wall_time_s() - t0);
 
     // ---------- schedule (SA3 distribution shift; default = LogSNR rate=0) ----------
     // Linear t = sigma_max*(1 - i/steps), warped by the selected dist-shift, with endpoints
@@ -952,11 +951,11 @@ inline GenResult Pipeline::generate(const GenParams& params) {
     ggml_set_output(vel);
     ggml_cgraph* gf_dit = ggml_new_graph_custom(dctx, 32768, false);
     ggml_build_forward_expand(gf_dit, vel);
-    profile_log(prof, "dit_build", wall_time_s() - tp_dit);
+    profile_log( "dit_build", wall_time_s() - tp_dit);
     tp_dit = wall_time_s();
     ggml_gallocr_t alloc_dit = ggml_gallocr_new(ggml_backend_get_default_buffer_type(DIT.backend));
     ggml_gallocr_alloc_graph(alloc_dit, gf_dit);
-    profile_log(prof, "dit_alloc", wall_time_s() - tp_dit);
+    profile_log( "dit_alloc", wall_time_s() - tp_dit);
     std::vector<int32_t> posb(S); for (int i = 0; i < S; i++) posb[i] = i;
     const float one = 1.0f;
     std::vector<float> tf, vbuf(N), vbuf_unc, vcfg;   // vbuf = conditioned velocity; vcfg = guided (CFG)
@@ -1015,10 +1014,10 @@ inline GenResult Pipeline::generate(const GenParams& params) {
                    (do_cfg && tcur >= cfg_interval_min && tcur <= cfg_interval_max) ? "  (cfg)" : "");
         if (params.should_cancel && params.should_cancel()) { dit_cancelled = true; break; }
     }
-    profile_log(prof, "dit_upload", dit_upload);
-    profile_log(prof, "dit_compute", dit_compute);
-    profile_log(prof, "dit_get_update", dit_download_update);
-    profile_log(prof, "dit_total", wall_time_s() - t_dit_total);
+    profile_log( "dit_upload", dit_upload);
+    profile_log( "dit_compute", dit_compute);
+    profile_log( "dit_get_update", dit_download_update);
+    profile_log( "dit_total", wall_time_s() - t_dit_total);
     ggml_gallocr_free(alloc_dit); ggml_free(dctx);
     if (!keep_models) { DIT.free(); dit_loras_.clear(); }   // DiT gone -> next gen reloads a clean base
     if (dit_cancelled)
@@ -1151,12 +1150,12 @@ inline GenResult Pipeline::generate(const GenParams& params) {
         if (cancelled)
             throw_cancelled_after_frugal_cleanup();
     }
-    profile_log(prof, "dec_build", dec_build);
-    profile_log(prof, "dec_alloc", dec_alloc);
-    profile_log(prof, "dec_upload", dec_upload);
-    profile_log(prof, "dec_compute", dec_compute);
-    profile_log(prof, "dec_download", dec_download);
-    profile_log(prof, "dec_total", wall_time_s() - t_dec_total);
+    profile_log( "dec_build", dec_build);
+    profile_log( "dec_alloc", dec_alloc);
+    profile_log( "dec_upload", dec_upload);
+    profile_log( "dec_compute", dec_compute);
+    profile_log( "dec_download", dec_download);
+    profile_log( "dec_total", wall_time_s() - t_dec_total);
 
     if (!keep_models) {
         AE.free();
