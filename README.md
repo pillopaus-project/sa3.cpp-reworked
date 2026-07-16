@@ -1,5 +1,5 @@
-# stable-audio-3 in c++ - SA3.cpp
-original work by @betweentwomidnights : https://github.com/betweentwomidnights/sa3.cpp.git 
+# stable-audio-3 in c++ 
+SA3.cpp original work by @betweentwomidnights : https://github.com/betweentwomidnights/sa3.cpp.git 
 
 # PP rework 
 (this repo)
