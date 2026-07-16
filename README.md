@@ -30,20 +30,16 @@ Default value changes:
   seed: 0 → -1 (random)
   bpm: added default 120
 
-Interface update : 
+# Interface update : 
 
-<img width="1649" height="1336" alt="Screenshot from 2026-07-11 11-54-01" src="https://github.com/user-attachments/assets/c1a6679d-cb85-4fc9-a19c-3b78ddcfea64" />
+<img width="2550" height="3300" alt="WebInt_b1_a" src="https://github.com/user-attachments/assets/d99a56c6-8775-4332-9653-ba01987a60ab" />
+
+<img width="2550" height="3300" alt="WebInt_b1_b" src="https://github.com/user-attachments/assets/2d408f63-1e2a-4efc-a83d-bbadd9c32548" />
+
+<img width="2550" height="3300" alt="WebInt_b1_c" src="https://github.com/user-attachments/assets/ac39a762-da8d-46ea-be4f-f32471d44bba" />
 
 
-
-Web Interface actual status :
-
-<img width="1191" height="1579" alt="1-ok" src="https://github.com/user-attachments/assets/fe6e3c5a-8282-4e58-af0a-551bf9a1b7da" />
-
-<img width="1125" height="1574" alt="2-ok" src="https://github.com/user-attachments/assets/cfc6b55b-5488-4cf7-a873-177373b8baf7" />
-
-<img width="1130" height="1145" alt="3-ok" src="https://github.com/user-attachments/assets/01d70e3e-9ce1-441d-8977-ffcbaa17f69c" />
-
+# original readme : 
 trying to make this as composable and extensible as i can without over-engineering it too much. my hope is that this might eventually replace the sa3 backend i already use in [gary4local](https://github.com/betweentwomidnights/gary-localhost-installer), and start unifying that application for mac/pc. 
 
 it might also just allow us to embed sa3 directly inside a JUCE/iPlug2 project. see [docs/EMBEDDING.md](docs/EMBEDDING.md).
