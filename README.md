@@ -1,4 +1,8 @@
-# stable-audio-3 in c++
+# stable-audio-3 in c++ - SA3.cpp
+original work by @betweentwomidnights : https://github.com/betweentwomidnights/sa3.cpp.git 
+
+# PP rework 
+(this repo)
 last changes :
 
 Replace all SA3_* env vars with Sa3Config CLI flags + JSON params
