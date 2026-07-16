@@ -22,7 +22,16 @@ case "$BACKEND" in
     cpu-variants)
             DIR=build-cpu-variants
             FLAGS="-DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON -DGGML_CUDA=OFF -DSA3_CUDA=OFF -DSA3_VULKAN=OFF" ;;
-    cuda)   DIR=build-cuda    ; FLAGS="-DSA3_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=native" ;;
+    cuda)   DIR=build-cuda    ; FLAGS="-DSA3_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=native"
+            # CUDA graphs require Ampere (CC >= 8.0); disable for older GPUs to avoid
+            # the runtime graph infrastructure overhead on every compute call.
+            if command -v nvidia-smi &>/dev/null; then
+                CC_MAJOR=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -1 | cut -d. -f1)
+                if [ -n "$CC_MAJOR" ] && [ "$CC_MAJOR" -lt 8 ] 2>/dev/null; then
+                    FLAGS="$FLAGS -DGGML_CUDA_GRAPHS=OFF"
+                    echo "[sa3] CUDA architecture $CC_MAJOR.x < 8.0 -> disabling CUDA graphs"
+                fi
+            fi ;;
     vulkan) DIR=build-vulkan  ; FLAGS="-DSA3_VULKAN=ON" ;;
     hip)    DIR=build-hip     ; FLAGS="-DSA3_HIP=ON" ;;
     metal)  DIR=build-metal   ; FLAGS="-DSA3_METAL=ON" ;;
