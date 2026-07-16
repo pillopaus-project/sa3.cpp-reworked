@@ -28,7 +28,7 @@ int main(int argc, char** argv) {
     const double t_total0 = sa3::wall_time_s();
     const char* tok_p = nullptr; const char* t5_p = nullptr; const char* dit_p = nullptr; const char* same_p = nullptr;
     const char* cond_p = nullptr;
-    std::string prompt = "Upbeat funk groove with slap bass, bright horns, tight drums";
+    std::string prompt;
     const char* wav_p = "song.wav";
     const char* init_p = nullptr;
     float inpaint_start = -1.0f, inpaint_end = -1.0f;
@@ -48,8 +48,17 @@ int main(int argc, char** argv) {
     sa3::LoudnessParams loudness = cfg.loudness;
     int frames = 128;
 
+    auto usage = [](FILE* f) {
+        fprintf(f, "usage: sa3-generate [--models-dir DIR] [--model medium|small-music|small-sfx [--encoding f16|f32]]\n"
+                   "                     [--tok <f> --t5 <f> --cond <f> --dit <f> --same <f>]\n"
+                   "                     --prompt \"...\" [--lora NAME|PATH [--lora-strength S]]... [--duration SEC | --frames N] [--steps N] [--threads N] [--seed S]\n"
+                   "                     [--dist-shift LogSNR|Flux|Full|None [--dist-shift-params p1,p2,p3,p4]] [--duration-padding SEC]\n"
+                   "                     [--cfg-scale S [--negative-prompt \"...\"] [--cfg-rescale R] [--cfg-interval min,max] [--apg-scale A] [--cfg-norm-threshold T]]\n"
+                   "                     [--flash-attn 0|1] [--same-flash-attn 0|1|2] [--profile 0|1] [--dump-cond DIR] [--out song.wav]\n");
+    };
     for (int i = 1; i < argc; i++) {
-        if      (!strcmp(argv[i], "--model")  && i+1 < argc) cfg.model_variant = argv[++i];
+        if      (!strcmp(argv[i], "--help")    || !strcmp(argv[i], "-h")) { usage(stdout); return 0; }
+        else if (!strcmp(argv[i], "--model")  && i+1 < argc) cfg.model_variant = argv[++i];
         else if (!strcmp(argv[i], "--encoding") && i+1 < argc) cfg.encoding = argv[++i];
         else if (!strcmp(argv[i], "--models-dir") && i+1 < argc) cfg.models_dir = argv[++i];
         else if (!strcmp(argv[i], "--adapters-dir") && i+1 < argc) cfg.adapters_dir = argv[++i];
@@ -128,6 +137,7 @@ int main(int argc, char** argv) {
         }
         else if (!strcmp(argv[i], "--no-limiter")) loudness.limiter_enabled = false;
         else if (!strcmp(argv[i], "--limiter-knee") && i+1 < argc) loudness.limiter_knee = (float)atof(argv[++i]);
+        else { fprintf(stderr, "error: unrecognized flag '%s'\n", argv[i]); return 1; }
     }
 
     // Apply config to library globals
@@ -167,11 +177,11 @@ int main(int argc, char** argv) {
 
     const bool inpaint = (inpaint_start >= 0.0f || inpaint_end >= 0.0f);
     if (paths.tok.empty() || paths.t5.empty() || paths.dit.empty() || paths.same.empty()) {
-        fprintf(stderr, "usage: sa3-generate [--models-dir DIR] [--model medium|small-music|small-sfx [--encoding f16|f32]]\n"
-                        "                     [--tok <f> --t5 <f> --cond <f> --dit <f> --same <f>]\n"
-                        "                     --prompt \"...\" [--lora NAME|PATH [--lora-strength S]]... [--duration SEC | --frames N] [--steps N] [--threads N] [--seed S]\n"
-                        "                     [--dist-shift LogSNR|Flux|Full|None [--dist-shift-params p1,p2,p3,p4]] [--duration-padding SEC]\n"
-                        "                     [--cfg-scale S [--negative-prompt \"...\"] [--cfg-rescale R] [--cfg-interval min,max] [--apg-scale A] [--cfg-norm-threshold T]] [--out song.wav]\n");
+        usage(stderr);
+        return 1;
+    }
+    if (prompt.empty()) {
+        fprintf(stderr, "--prompt is required\n");
         return 1;
     }
     if (duration_set && frames_set) {

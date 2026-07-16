@@ -758,6 +758,13 @@ int main(int argc, char** argv) {
         else if (a == "--same-flash-attn") { auto v = val(); if (!v.empty()) cfg.same_flash_attn_mode = atoi(v.c_str()); }
         else if (a == "--profile")      { auto v = val(); if (!v.empty()) cfg.profile = atoi(v.c_str()); }
         else if (a == "--dump-cond")    { auto v = val(); if (!v.empty()) cfg.dump_cond_dir = v; }
+        else if (a == "--help" || a == "-h") {
+            fprintf(stdout, "usage: sa3-server [--host ADDR] [--port N] [--models-dir DIR] [--model medium|small-music|small-sfx]\n"
+                            "                     [--encoding f16|f32] [--device DEVICE] [--gpu SELECTOR] [--threads N]\n"
+                            "                     [--flash-attn 0|1] [--same-flash-attn 0|1|2] [--profile 0|1] [--dump-cond DIR]\n");
+            return 0;
+        }
+        else { fprintf(stderr, "error: unrecognized flag '%s'\n", a.c_str()); return 1; }
     }
 
     // Apply config to library globals
