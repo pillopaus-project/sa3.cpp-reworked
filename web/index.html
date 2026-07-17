@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>sa3.cpp – Web Interface</title>
+<title>SA3.cpp - PP rework – Web Interface</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   :root {
@@ -114,13 +114,14 @@
 </head>
 <body>
 
-<h1><a href="https://github.com/betweentwomidnights/sa3.cpp" target="_blank" style="color:var(--accent);text-decoration:none">SA3.CPP</a> <small>Stable Audio 3 Web Interface</small></h1>
+<h1><a href="https://github.com/betweentwomidnights/sa3.cpp" target="_blank" style="color:var(--accent);text-decoration:none">SA3.CPP</a> <small>SA3.cpp Web Interface</small></h1>
 
 <!-- ─── Server Status & Presets ──────────────────────────────────────── -->
 <div id="top-bar" class="card" style="padding:8px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
   <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:180px">
     <span id="server-status" style="display:none;font-weight:600;font-size:0.85rem"></span>
     <span id="model-info" style="display:none;font-size:0.82rem;color:var(--muted)"></span>
+    <label class="inline-label" style="font-size:0.82rem"><input id="keep-models" type="checkbox"> Keep Models Resident</label>
   </div>
   <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
     <button id="theme-btn" class="small" title="Toggle dark/light theme" style="font-size:1.1rem;line-height:1;padding:4px 10px">☀️</button>
@@ -136,7 +137,7 @@
   <div class="row gapped">
     <div class="col" style="flex:3">
       <label for="prompt">Prompt</label>
-      <textarea id="prompt" rows="2" placeholder="e.g. upbeat funk groove with slap bass, bright horns, tight drums">upbeat funk groove with slap bass, bright horns, tight drums</textarea>
+      <textarea id="prompt" rows="4" placeholder="e.g. upbeat funk groove with slap bass, bright horns, tight drums">upbeat funk groove with slap bass, bright horns, tight drums</textarea>
     </div>
   </div>
   <div class="row gapped">
@@ -182,8 +183,8 @@
 <h2>Advanced <span class="badge">collapsible</span></h2>
 
 <div class="card">
-  <button class="collapse-toggle" data-target="cfg-section" type="button">Classifier-Free Guidance</button>
-  <div id="cfg-section" class="collapse-body">
+  <button class="collapse-toggle collapsed" data-target="cfg-section" type="button">Classifier-Free Guidance</button>
+  <div id="cfg-section" class="collapse-body collapsed">
     <div class="param-grid" style="margin-top:10px">
       <div><label for="cfg-scale">CFG Scale</label><input id="cfg-scale" type="number" step="0.1" min="0"></div>
       <div><label for="cfg-rescale">CFG Rescale</label><input id="cfg-rescale" type="number" step="0.05" min="0" max="1"></div>
@@ -196,8 +197,8 @@
 </div>
 
 <div class="card">
-  <button class="collapse-toggle" data-target="ds-section" type="button">Distribution Shift</button>
-  <div id="ds-section" class="collapse-body">
+  <button class="collapse-toggle collapsed" data-target="ds-section" type="button">Distribution Shift</button>
+  <div id="ds-section" class="collapse-body collapsed">
     <div class="row gapped" style="margin-top:10px">
       <div class="col" style="flex:0 0 140px">
         <label for="dist-shift">Type</label>
@@ -218,8 +219,8 @@
 </div>
 
 <div class="card">
-  <button class="collapse-toggle" data-target="chunk-section" type="button">Chunked SAME Encode/Decode</button>
-  <div id="chunk-section" class="collapse-body">
+  <button class="collapse-toggle collapsed" data-target="chunk-section" type="button">Chunked SAME Encode/Decode</button>
+  <div id="chunk-section" class="collapse-body collapsed">
     <div class="param-grid" style="margin-top:10px">
       <div><label for="encode-chunk-size">Encode Chunk Size</label><input id="encode-chunk-size" type="number" min="0" step="1"></div>
       <div><label for="encode-overlap">Encode Overlap</label><input id="encode-overlap" type="number" min="0" step="1"></div>
@@ -231,8 +232,8 @@
 </div>
 
 <div class="card">
-  <button class="collapse-toggle" data-target="loud-section" type="button">Loudness / Output Processing</button>
-  <div id="loud-section" class="collapse-body">
+  <button class="collapse-toggle collapsed" data-target="loud-section" type="button">Loudness / Output Processing</button>
+  <div id="loud-section" class="collapse-body collapsed">
     <div class="param-grid" style="margin-top:10px">
       <div><label for="latent-rescale">Latent Rescale</label><input id="latent-rescale" type="number" step="0.05" min="0"></div>
       <div><label for="latent-shift">Latent Shift</label><input id="latent-shift" type="number" step="0.05"></div>
@@ -246,15 +247,10 @@
   </div>
 </div>
 
-<div class="card">
-  <div class="row gapped">
-    <div class="col"><label class="inline-label"><input id="keep-models" type="checkbox"> Keep Models Resident (faster next request, high VRAM)</label></div>
-  </div>
-</div>
-
 <!-- ─── Init Audio / Inpaint ─────────────────────────────────────────── -->
-<h2>Init Audio &amp; Inpainting</h2>
 <div class="card">
+  <button class="collapse-toggle collapsed" data-target="init-audio-section" type="button">Init Audio &amp; Inpainting</button>
+  <div id="init-audio-section" class="collapse-body collapsed">
   <div class="param-grid">
     <div style="grid-column:1/-1">
       <div class="row" style="gap:6px;align-items:end">
@@ -282,11 +278,13 @@
     <div><label for="inpaint-end">Inpaint End (s)</label><input id="inpaint-end" type="number" step="0.5"></div>
   </div>
   <div class="small-note">Set inpaint_start >= 0 to enable inpainting (requires init audio + local-cond DiT). -1 = disabled.</div>
+  </div>
 </div>
 
 <!-- ─── LoRAs ─────────────────────────────────────────────────────────── -->
-<h2>LoRA Adapters</h2>
 <div class="card">
+  <button class="collapse-toggle collapsed" data-target="lora-section" type="button">LoRA Adapters</button>
+  <div id="lora-section" class="collapse-body collapsed">
   <div class="row gapped">
     <div class="col" style="flex:2">
       <label for="lora-select">Name</label>
@@ -299,6 +297,7 @@
   </div>
   <div id="active-loras"></div>
   <div class="small-note">Click Connect above to load available LoRAs from the server.</div>
+  </div>
 </div>
 
 <!-- ─── Generate Buttons ─────────────────────────────────────────────── -->

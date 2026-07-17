@@ -318,10 +318,12 @@ function onDistShiftChange() {
 let pollTimer = null;
 let currentSongDataUrl = null;
 let currentSongSeed = -1;
+let currentSongConfig = null;
 function pushCurrentToPastSongs() {
     if (currentSongDataUrl) {
-        addSongEntry(currentSongDataUrl, currentSongSeed);
+        addSongEntry(currentSongDataUrl, currentSongSeed, currentSongConfig ?? undefined);
         currentSongDataUrl = null;
+        currentSongConfig = null;
         deleteCurrentSongFromDB();
         const rs = $("#result-section");
         if (rs)
@@ -397,6 +399,7 @@ function startPolling(sessionId, which) {
                     const dataUrl = `data:audio/wav;base64,${r.audio_data}`;
                     currentSongDataUrl = dataUrl;
                     currentSongSeed = r.meta?.seed ?? -1;
+                    currentSongConfig = readFormAsConfig();
                     saveCurrentSongToDB(dataUrl, currentSongSeed);
                     resultAudio.src = dataUrl;
                     resultSection.style.display = "block";
@@ -567,7 +570,7 @@ async function loadCurrentSongFromDB() {
     catch { /* silently fail */ }
 }
 // ─── Past Songs ──────────────────────────────────────────────────────────────
-function addSongEntry(audioData, seed) {
+function addSongEntry(audioData, seed, config) {
     const now = new Date();
     const ts = now.getFullYear().toString() +
         String(now.getMonth() + 1).padStart(2, "0") +
@@ -582,7 +585,7 @@ function addSongEntry(audioData, seed) {
         timestamp: now.getTime(),
         audioData,
         seed,
-        config: readFormAsConfig(),
+        config: config ?? readFormAsConfig(),
     };
     pastSongs.unshift(entry);
     renderPastSongs();

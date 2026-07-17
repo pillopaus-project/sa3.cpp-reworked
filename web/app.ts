@@ -472,11 +472,13 @@ let pollTimer: ReturnType<typeof setInterval> | null = null;
 
 let currentSongDataUrl: string | null = null;
 let currentSongSeed = -1;
+let currentSongConfig: UiConfig | null = null;
 
 function pushCurrentToPastSongs(): void {
   if (currentSongDataUrl) {
-    addSongEntry(currentSongDataUrl, currentSongSeed);
+    addSongEntry(currentSongDataUrl, currentSongSeed, currentSongConfig ?? undefined);
     currentSongDataUrl = null;
+    currentSongConfig = null;
     deleteCurrentSongFromDB();
     const rs = $("#result-section");
     if (rs) rs.style.display = "none";
@@ -553,6 +555,7 @@ function startPolling(sessionId: string, which: "gen" | "loop"): void {
           const dataUrl = `data:audio/wav;base64,${r.audio_data}`;
           currentSongDataUrl = dataUrl;
           currentSongSeed = r.meta?.seed ?? -1;
+          currentSongConfig = readFormAsConfig();
           saveCurrentSongToDB(dataUrl, currentSongSeed);
           resultAudio.src = dataUrl;
           resultSection.style.display = "block";
@@ -723,7 +726,7 @@ async function loadCurrentSongFromDB(): Promise<void> {
 
 // ─── Past Songs ──────────────────────────────────────────────────────────────
 
-function addSongEntry(audioData: string, seed: number): void {
+function addSongEntry(audioData: string, seed: number, config?: UiConfig): void {
   const now = new Date();
   const ts = now.getFullYear().toString() +
     String(now.getMonth() + 1).padStart(2, "0") +
@@ -738,7 +741,7 @@ function addSongEntry(audioData: string, seed: number): void {
     timestamp: now.getTime(),
     audioData,
     seed,
-    config: readFormAsConfig(),
+    config: config ?? readFormAsConfig(),
   };
   pastSongs.unshift(entry);
   renderPastSongs();
