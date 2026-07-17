@@ -106,11 +106,11 @@ function readForm() {
         latent_rescale: num("#latent-rescale"),
         latent_shift: num("#latent-shift"),
         ...(hasLatentTarget ? { latent_target_std: num("#latent-target-std") } : { latent_target_std: null }),
-        latent_adapt_min: num("#latent-adapt-min"),
+        latent_adapt_min: Math.trunc(num("#latent-adapt-min") * 100) / 100,
         latent_adapt_max: num("#latent-adapt-max"),
         ...(hasPeakNorm ? { peak_normalize_db: num("#peak-normalize-db") } : { peak_normalize_db: null }),
         ...(hasLimiter ? { limiter_ceiling_db: num("#limiter-ceiling-db") } : { limiter_ceiling_db: null }),
-        limiter_knee: num("#limiter-knee"),
+        limiter_knee: Math.trunc(num("#limiter-knee") * 100) / 100,
     };
 }
 // ─── Health ─────────────────────────────────────────────────────────────────
@@ -136,18 +136,18 @@ async function checkHealth() {
     }
 }
 // ─── Config fetch (populate defaults from server) ───────────────────────────
-
 async function fetchConfig() {
     try {
         configDefaults = await apiGet("/config");
         applyConfigDefaults();
-    } catch {
-        // server not connected yet
+    }
+    catch {
+        // server not connected yet — form stays empty until health check succeeds
     }
 }
-
 function applyConfigDefaults() {
-    if (!configDefaults) return;
+    if (!configDefaults)
+        return;
     const c = configDefaults;
     setVal("#duration", c.duration);
     setVal("#duration-num", c.duration);
@@ -170,20 +170,28 @@ function applyConfigDefaults() {
     setVal("#inpaint-start", c.inpaint_start);
     setVal("#inpaint-end", c.inpaint_end);
     setVal("#seed", c.seed);
+    setVal("#lora-strength", c.lora_strength);
     if (c.loudness) {
         const l = c.loudness;
-        if (l.latent_rescale != null) setVal("#latent-rescale", l.latent_rescale);
-        if (l.latent_shift != null) setVal("#latent-shift", l.latent_shift);
-        if (l.latent_target_std != null) setVal("#latent-target-std", l.latent_target_std);
-        if (l.latent_adapt_min != null) setVal("#latent-adapt-min", l.latent_adapt_min);
-        if (l.latent_adapt_max != null) setVal("#latent-adapt-max", l.latent_adapt_max);
-        if (l.peak_normalize_db != null) setVal("#peak-normalize-db", l.peak_normalize_db);
-        if (l.limiter_ceiling_db != null) setVal("#limiter-ceiling-db", l.limiter_ceiling_db);
-        if (l.limiter_knee != null) setVal("#limiter-knee", l.limiter_knee);
+        if (l.latent_rescale != null)
+            setVal("#latent-rescale", l.latent_rescale);
+        if (l.latent_shift != null)
+            setVal("#latent-shift", l.latent_shift);
+        if (l.latent_target_std != null)
+            setVal("#latent-target-std", l.latent_target_std);
+        if (l.latent_adapt_min != null)
+            setVal("#latent-adapt-min", l.latent_adapt_min);
+        if (l.latent_adapt_max != null)
+            setVal("#latent-adapt-max", l.latent_adapt_max);
+        if (l.peak_normalize_db != null)
+            setVal("#peak-normalize-db", l.peak_normalize_db);
+        if (l.limiter_ceiling_db != null)
+            setVal("#limiter-ceiling-db", l.limiter_ceiling_db);
+        if (l.limiter_knee != null)
+            setVal("#limiter-knee", l.limiter_knee);
     }
     onDistShiftChange();
 }
-
 // ─── Loras ──────────────────────────────────────────────────────────────────
 async function loadLoras() {
     try {
@@ -304,7 +312,7 @@ async function uploadAudioFile() {
 function onDistShiftChange() {
     const type = val("#dist-shift");
     const labels = DIST_SHIFT_LABELS[type] || ["p1", "p2", "p3", "p4"];
-    const defaults = (configDefaults && configDefaults.dist_shift_defaults && configDefaults.dist_shift_defaults[type]) || [0, 0, 0, 0];
+    const defaults = configDefaults?.dist_shift_defaults?.[type] ?? [0, 0, 0, 0];
     for (let i = 0; i < 4; i++) {
         const input = $(`#dsp${i + 1}`);
         const label = document.querySelector(`label[for="dsp${i + 1}"]`);
@@ -706,11 +714,11 @@ function readFormAsConfig() {
         latent_rescale: num("#latent-rescale"),
         latent_shift: num("#latent-shift"),
         latent_target_std: ltRaw.length > 0 ? num("#latent-target-std") : null,
-        latent_adapt_min: num("#latent-adapt-min"),
+        latent_adapt_min: Math.trunc(num("#latent-adapt-min") * 100) / 100,
         latent_adapt_max: num("#latent-adapt-max"),
         peak_normalize_db: pnRaw.length > 0 ? num("#peak-normalize-db") : null,
         limiter_ceiling_db: lcRaw.length > 0 ? num("#limiter-ceiling-db") : null,
-        limiter_knee: num("#limiter-knee"),
+        limiter_knee: Math.trunc(num("#limiter-knee") * 100) / 100,
         init_path: val("#init-path").trim(),
         init_noise_level: num("#init-noise-level"),
         inpaint_start: num("#inpaint-start"),

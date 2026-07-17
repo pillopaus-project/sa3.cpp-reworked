@@ -54,6 +54,8 @@ struct Sa3Config {
     int    decode_overlap    = 32;
     double bpm               = 120.0;
 
+    double lora_strength = 0.0;
+
     // Loudness (LoudnessParams ctor provides its own member defaults)
     sa3::LoudnessParams loudness;
 };

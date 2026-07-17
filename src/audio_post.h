@@ -97,6 +97,8 @@ inline bool text_disables_optional_float(const char* text) {
 
 inline void normalize_loudness_params(LoudnessParams& p) {
     if (p.limiter_enabled && p.limiter_ceiling_db > 0.0f) p.limiter_enabled = false;
+    p.latent_adapt_min = std::trunc(p.latent_adapt_min * 100.0f) / 100.0f;
+    p.limiter_knee = std::trunc(p.limiter_knee * 100.0f) / 100.0f;
 }
 
 inline bool validate_loudness_params(const LoudnessParams& p, std::string& err) {

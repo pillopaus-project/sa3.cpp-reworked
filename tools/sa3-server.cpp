@@ -113,16 +113,23 @@ std::string json_opt_num(bool enabled, double v) {
     return enabled ? json_num(v) : "null";
 }
 
+std::string json_fixed2(double v) {
+    if (!std::isfinite(v)) return "null";
+    char b[64];
+    snprintf(b, sizeof b, "%.2f", v);
+    return b;
+}
+
 std::string loudness_params_json(const sa3::LoudnessParams& p) {
     std::string body = "{";
     body += "\"latent_rescale\":" + json_num(p.latent_rescale);
     body += ",\"latent_shift\":" + json_num(p.latent_shift);
     body += ",\"latent_target_std\":" + json_opt_num(p.latent_target_std_enabled, p.latent_target_std);
-    body += ",\"latent_adapt_min\":" + json_num(p.latent_adapt_min);
+    body += ",\"latent_adapt_min\":" + json_fixed2(p.latent_adapt_min);
     body += ",\"latent_adapt_max\":" + json_num(p.latent_adapt_max);
     body += ",\"peak_normalize_db\":" + json_opt_num(p.peak_normalize_enabled, p.peak_normalize_db);
     body += ",\"limiter_ceiling_db\":" + json_opt_num(p.limiter_enabled, p.limiter_ceiling_db);
-    body += ",\"limiter_knee\":" + json_num(p.limiter_knee);
+    body += ",\"limiter_knee\":" + json_fixed2(p.limiter_knee);
     body += "}";
     return body;
 }
@@ -133,14 +140,14 @@ std::string loudness_meta_json(const sa3::LoudnessMeta& meta) {
     body += "\"latent_rescale\":" + json_num(p.latent_rescale);
     body += ",\"latent_shift\":" + json_num(p.latent_shift);
     body += ",\"latent_target_std\":" + json_opt_num(p.latent_target_std_enabled, p.latent_target_std);
-    body += ",\"latent_adapt_min\":" + json_num(p.latent_adapt_min);
+    body += ",\"latent_adapt_min\":" + json_fixed2(p.latent_adapt_min);
     body += ",\"latent_adapt_max\":" + json_num(p.latent_adapt_max);
     body += ",\"latent_factor\":" + json_num(meta.latent_factor);
     body += ",\"latent_std\":" + json_opt_num(meta.latent_std_set, meta.latent_std);
     body += ",\"peak_normalize_db\":" + json_opt_num(p.peak_normalize_enabled, p.peak_normalize_db);
     body += ",\"peak_normalize_gain\":" + json_opt_num(meta.peak_normalize_gain_set, meta.peak_normalize_gain);
     body += ",\"limiter_ceiling_db\":" + json_opt_num(p.limiter_enabled, p.limiter_ceiling_db);
-    body += ",\"limiter_knee\":" + json_num(p.limiter_knee);
+    body += ",\"limiter_knee\":" + json_fixed2(p.limiter_knee);
     body += ",\"limiter_limited_fraction\":" + json_opt_num(meta.limiter_limited_fraction_set, meta.limiter_limited_fraction);
     body += ",\"decoded_peak\":" + json_num(meta.decoded_peak);
     body += ",\"final_peak\":" + json_num(meta.final_peak);
@@ -718,6 +725,7 @@ std::string config_json(const Sa3Config& cfg) {
     body += ",\"encode_overlap\":" + std::to_string(cfg.encode_overlap);
     body += ",\"decode_chunk_size\":" + std::to_string(cfg.decode_chunk_size);
     body += ",\"decode_overlap\":" + std::to_string(cfg.decode_overlap);
+    body += ",\"lora_strength\":" + json_num(cfg.lora_strength);
     body += ",\"cpu_threads\":" + std::to_string(cfg.cpu_threads);
     body += ",\"device\":\"" + json_escape(cfg.device) + "\"";
     body += ",\"gpu_selector\":\"" + json_escape(cfg.gpu_selector) + "\"";

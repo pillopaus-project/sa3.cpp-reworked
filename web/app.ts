@@ -73,6 +73,7 @@ interface ConfigResponse {
   bpm: number;
   loudness: Record<string, unknown>;
   dist_shift_defaults: Record<string, [number, number, number, number]>;
+  lora_strength: number;
 }
 
 interface HealthResponse {
@@ -253,11 +254,11 @@ function readForm(): GenerateRequest {
     latent_rescale: num("#latent-rescale"),
     latent_shift: num("#latent-shift"),
     ...(hasLatentTarget ? { latent_target_std: num("#latent-target-std") } : { latent_target_std: null }),
-    latent_adapt_min: num("#latent-adapt-min"),
+    latent_adapt_min: Math.trunc(num("#latent-adapt-min") * 100) / 100,
     latent_adapt_max: num("#latent-adapt-max"),
     ...(hasPeakNorm ? { peak_normalize_db: num("#peak-normalize-db") } : { peak_normalize_db: null }),
     ...(hasLimiter ? { limiter_ceiling_db: num("#limiter-ceiling-db") } : { limiter_ceiling_db: null }),
-    limiter_knee: num("#limiter-knee"),
+    limiter_knee: Math.trunc(num("#limiter-knee") * 100) / 100,
   };
 }
 
@@ -320,6 +321,7 @@ function applyConfigDefaults(): void {
   setVal("#inpaint-start", c.inpaint_start);
   setVal("#inpaint-end", c.inpaint_end);
   setVal("#seed", c.seed);
+  setVal("#lora-strength", c.lora_strength);
   if (c.loudness) {
     const l = c.loudness;
     if (l.latent_rescale != null) setVal("#latent-rescale", l.latent_rescale as number);
@@ -909,11 +911,11 @@ function readFormAsConfig(): UiConfig {
     latent_rescale: num("#latent-rescale"),
     latent_shift: num("#latent-shift"),
     latent_target_std: ltRaw.length > 0 ? num("#latent-target-std") : null,
-    latent_adapt_min: num("#latent-adapt-min"),
+    latent_adapt_min: Math.trunc(num("#latent-adapt-min") * 100) / 100,
     latent_adapt_max: num("#latent-adapt-max"),
     peak_normalize_db: pnRaw.length > 0 ? num("#peak-normalize-db") : null,
     limiter_ceiling_db: lcRaw.length > 0 ? num("#limiter-ceiling-db") : null,
-    limiter_knee: num("#limiter-knee"),
+    limiter_knee: Math.trunc(num("#limiter-knee") * 100) / 100,
     init_path: val("#init-path").trim(),
     init_noise_level: num("#init-noise-level"),
     inpaint_start: num("#inpaint-start"),
