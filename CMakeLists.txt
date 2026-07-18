@@ -11,6 +11,9 @@ endif()
 
 # Put our binaries next to the ggml DLLs so tools run without PATH juggling.
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+
 
 # Backend toggles (forwarded to the vanilla ggml submodule).
 # CUDA is our first-class target; others are end-stage goals.

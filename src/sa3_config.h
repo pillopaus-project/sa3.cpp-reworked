@@ -24,7 +24,7 @@ struct Sa3Config {
     std::string device;                         // "" → auto (GPU if avail), "cpu" → CPU
     std::string gpu_selector;                   // "" → auto
     int cpu_threads          = 0;               // 0 → auto
-    int flash_attn           = 0;               // 0=off, 1=on
+    int flash_attn           = 1;               // 0=off, 1=on
     int same_flash_attn_mode = 0;               // 0=off, 1=full, 2=local
     int profile              = 0;               // 0=off, 1=on
 

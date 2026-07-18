@@ -556,6 +556,7 @@ inline GenResult Pipeline::generate(const GenParams& params) {
         if (bn && (strstr(bn, "CUDA") || strstr(bn, "ROCm") || strstr(bn, "HIP"))) {
             fprintf(stderr, "[sa3] --same-flash-attn=local is unsupported on %s; falling back to full\n", bn);
             same_l_flash_mode = 1;
+            nn::g_same_flash_attn_mode = 1;
         }
     }
     const bool same_l_flash_attn = same_l_flash_mode != 0;
