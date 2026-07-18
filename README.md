@@ -32,11 +32,9 @@ Default value changes:
 
 # Interface update : 
 
-<img width="2550" height="3300" alt="WebInt_b1_a" src="https://github.com/user-attachments/assets/d99a56c6-8775-4332-9653-ba01987a60ab" />
+<img width="2550" height="3300" alt="SA3 cpp - PP rework – Web Interface1" src="https://github.com/user-attachments/assets/9dfe2483-5171-4f01-88cf-a5a5a09f6e87" />
 
-<img width="2550" height="3300" alt="WebInt_b1_b" src="https://github.com/user-attachments/assets/2d408f63-1e2a-4efc-a83d-bbadd9c32548" />
-
-<img width="2550" height="3300" alt="WebInt_b1_c" src="https://github.com/user-attachments/assets/ac39a762-da8d-46ea-be4f-f32471d44bba" />
+<img width="2550" height="3300" alt="SA3 cpp - PP rework – Web Interface2" src="https://github.com/user-attachments/assets/f7d1378c-1a59-4df6-9f72-e6483e8440e1" />
 
 
 # original readme : 
