@@ -11,7 +11,7 @@ inline const char* index_html = R"sa3web(
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SA3.cpp - PP rework – Web Interface</title>
+<title>SA3.cpp-PP rework</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   :root {
@@ -122,7 +122,7 @@ inline const char* index_html = R"sa3web(
 </head>
 <body>
 
-<h1><a href="https://github.com/betweentwomidnights/sa3.cpp" target="_blank" style="color:var(--accent);text-decoration:none">SA3.CPP</a> <small>SA3.cpp Web Interface</small></h1>
+<h1><a href="https://github.com/pillopaus-project/sa3.cpp-reworked" target="_blank" style="color:var(--accent);text-decoration:none">SA3.CPP-PP rework</a> <small>SA3.cpp-PP rework  Web Interface</small></h1>
 
 <!-- ─── Server Status & Presets ──────────────────────────────────────── -->
 <div id="top-bar" class="card" style="padding:8px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
