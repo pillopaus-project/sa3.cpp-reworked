@@ -5,11 +5,11 @@ SA3.cpp original work by @betweentwomidnights : https://github.com/betweentwomid
 (this repo)
 last changes :
 
-Q4_KM support for dit/same/t5
-sa3-Quantize and related test programs to quantize and check the quantized models
-ggml related changes to dequantize and load Qx_KM quantized models 
-sa3-generate and sa3-server updated , new runtime flags detailed in the --help
-webapp updated .
+- Q4_KM support for dit/same/t5;
+- sa3-Quantize and related test programs to quantize and check the quantized models;
+- ggml related changes to dequantize and load Qx_KM quantized models;
+- sa3-generate and sa3-server updated , new runtime flags detailed in the --help;
+- webapp updated;
 
 
 Replace all SA3_* env vars with Sa3Config CLI flags + JSON params
