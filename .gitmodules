@@ -1,4 +1,4 @@
 [submodule "ggml"]
 	path = ggml
 	url = https://github.com/pillopaus-project/ggml.git
-	branch = master
+	branch = cc50-optimizations

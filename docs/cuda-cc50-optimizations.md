@@ -277,3 +277,58 @@ future work:
 - CUDA graph capture (the `bench_cuda_graphs.cu` tool was written for this)
 - Tensor core matmul with F16 accumulation
 - Async copy (cp.async) for flash attention tiles
+
+---
+
+## A6 — K-Quants Support for `get_rows` CUDA Kernel
+
+**Files:** `ggml/src/ggml-cuda/dequantize.cuh`, `ggml/src/ggml-cuda/getrows.cu`
+
+### Problem
+
+The `get_rows_cuda_q` template in `getrows.cu` requires per-element dequantize
+functions with signature `void(const void*, int64_t ib, int iqs, float2&)`.
+These existed for legacy quants (Q4_0, Q5_0, Q8_0, etc.) but **not** for
+k-quants (Q4_K, Q5_K, Q6_K, etc.).
+
+The `sa3-t5gemma` model uses `ggml_get_rows` on `te.embed.weight`, which gets
+quantized to Q6_K by the Q4_K_M policy. The CUDA backend would hit `GGML_ABORT`
+at the `// TODO: k-quants` default case.
+
+### Solution
+
+1. **Added `get_scale_min_k4` helper** to `dequantize.cuh` (shared with
+   `convert.cu` block dequantize kernels)
+
+2. **Added per-element dequantize functions** in `dequantize.cuh`:
+   - `dequantize_q4_K` — maps linear element index to Q4_K's interleaved layout
+   - `dequantize_q5_K` — maps to Q5_K's layout with qh bit extraction
+   - `dequantize_q6_K` — maps to Q6_K's ql/qh/scales layout
+
+   All match the block dequantize logic in `convert.cu` exactly.
+
+3. **Added custom kernel `k_get_rows_k`** in `getrows.cu`:
+   - One thread per output element (like `k_get_rows_float`)
+   - Computes block index: `ib = i00 / QK_K`, element index: `iqs = i00 % QK_K`
+   - Calls the per-element dequantize function
+
+4. **Dispatch cases** in `ggml_cuda_get_rows_switch_src0_type` for
+   `GGML_TYPE_Q4_K`, `GGML_TYPE_Q5_K`, `GGML_TYPE_Q6_K`
+
+### Verification
+
+```bash
+# CPU reference
+./build-cuda-cc50/bin/sa3-quant-eval --model <orig> <quant> --cpu
+# hidden  MSE=1.062e+00  cos=0.976001
+
+# GPU (fixed)
+./build-cuda-cc50/bin/sa3-quant-eval --model <orig> <quant>
+# hidden  MSE=9.426e-01  cos=0.978713
+```
+
+GPU now matches CPU within expected quantization variance.
+
+### TODO
+- [ ] Backward pass (`ggml_cuda_op_get_rows_back`) for k-quants (training only)
+- [ ] Q2_K, Q3_K, Q8_K support (not used by Q4_K_M policy)

@@ -118,6 +118,18 @@ add_executable(sa3-lora-convert tools/sa3-lora-convert.cpp vendor/yyjson/yyjson.
 target_link_libraries(sa3-lora-convert PRIVATE sa3)
 target_include_directories(sa3-lora-convert PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vendor/yyjson)
 
+# sa3-quantize: compress F16/F32 weight matrices to Q4_K / Q6_K (uses only ggml-base, no sa3 pipeline).
+add_executable(sa3-quantize tools/sa3-quantize.cpp)
+target_link_libraries(sa3-quantize PRIVATE sa3)
+
+# sa3-quant-eval: compare orig vs quant model outputs (one model at a time).
+add_executable(sa3-quant-eval tools/sa3-quant-eval.cpp)
+target_link_libraries(sa3-quant-eval PRIVATE sa3)
+
+# sa3-quant-check: per-weight dequant validation (find corrupted quantized tensors).
+add_executable(sa3-quant-check tools/sa3-quant-check.cpp)
+target_link_libraries(sa3-quant-check PRIVATE sa3)
+
 # --- libsa3: C ABI shared library (embed sa3 in a host app; see src/libsa3.h) ---------------
 # Windows: sa3.dll + sa3.lib (import lib).  Unix/macOS: libsa3.so / libsa3.dylib.
 add_library(sa3_shared SHARED src/libsa3.cpp vendor/yyjson/yyjson.c)

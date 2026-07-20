@@ -80,6 +80,7 @@ interface HealthResponse {
   status: string;
   model: string;
   encoding: string;
+  actual_encoding: string;
   loaded: boolean;
   loudness_defaults: Record<string, unknown>;
 }
@@ -275,7 +276,7 @@ async function checkHealth(): Promise<void> {
     const h = await apiGet<HealthResponse>("/health");
     statusEl.textContent = "✓ Connected";
     statusEl.className = "ok";
-    modelInfo.textContent = `${h.model} / ${h.encoding} ${h.loaded ? "(loaded)" : "(unloaded)"}`;
+    modelInfo.textContent = `${h.model} / ${h.actual_encoding} ${h.loaded ? "(loaded)" : "(unloaded)"}`;
     modelInfo.style.display = "";
     loadLoras();
     fetchAudioFiles();

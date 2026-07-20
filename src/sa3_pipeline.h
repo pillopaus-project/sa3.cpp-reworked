@@ -285,18 +285,32 @@ struct ModelPaths {
 
 inline bool ModelPaths::resolve(const std::string& md, const std::string& variant,
                                 const std::string& encoding, ModelPaths& out, std::string& err) {
-    const std::string ENC = (encoding == "f32" || encoding == "F32") ? "F32" : "F16";
+    // encoding is advisory (no validation elsewhere): try candidate suffixes in priority
+    // order so the resolver picks whichever DiT/SAME file actually exists (F16/F32/Q4_KM/Q8_0).
+    std::vector<std::string> encs;
+    if      (encoding == "f32"  || encoding == "F32")  encs = {"F32",   "F16",   "Q4_KM", "Q8_0"};
+    else if (encoding == "q4_km"|| encoding == "Q4_KM")encs = {"Q4_KM", "Q8_0",  "F16",   "F32"};
+    else if (encoding == "q8_0" || encoding == "Q8_0") encs = {"Q8_0",  "Q4_KM", "F16",   "F32"};
+    else                                             encs = {"F16",   "F32",   "Q4_KM", "Q8_0"}; // default f16
+
     auto one = [&](const std::string& prefix, const std::string& suffix, const char* what) {
         std::string p = resolve_one(md, prefix, suffix);
         if (p.empty())
             err += (err.empty() ? "" : "; ") + ("no " + std::string(what) + " (" + prefix + "*" + suffix + ")");
         return p;
     };
+    auto one_enc = [&](const std::string& prefix, const char* what) -> std::string {
+        for (const auto& E : encs) {
+            std::string p = resolve_one(md, prefix, "-" + E + ".gguf");
+            if (!p.empty()) return p;
+        }
+        return one(prefix, ".gguf", what); // fallback: any file with this prefix
+    };
     out.tok  = one("t5gemma-b-b-ul2-v1.0-vocab",             ".gguf",            "tokenizer");
     out.t5   = one("t5gemma-b-b-ul2-encoder-",               ".gguf",            "encoder");
     out.cond = one("stable-audio-3-" + variant + "-conditioner-", ".gguf",       "conditioner");
-    out.dit  = one("stable-audio-3-" + variant + "-dit-",  "-" + ENC + ".gguf",  "DiT");
-    out.same = one("stable-audio-3-" + variant + "-same-", "-" + ENC + ".gguf",  "SAME");
+    out.dit  = one_enc("stable-audio-3-" + variant + "-dit-",  "DiT");
+    out.same = one_enc("stable-audio-3-" + variant + "-same-", "SAME");
     if (!err.empty()) err += " in " + md + "/ (run: python tools/download_models.py --variant " + variant + ")";
     return err.empty();
 }

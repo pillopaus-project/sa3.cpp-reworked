@@ -480,7 +480,7 @@ async function checkHealth() {
         const h = await apiGet("/health");
         statusEl.textContent = "✓ Connected";
         statusEl.className = "ok";
-        modelInfo.textContent = `${h.model} / ${h.encoding} ${h.loaded ? "(loaded)" : "(unloaded)"}`;
+        modelInfo.textContent = `${h.model} / ${h.actual_encoding} ${h.loaded ? "(loaded)" : "(unloaded)"}`;
         modelInfo.style.display = "";
         loadLoras();
         fetchAudioFiles();

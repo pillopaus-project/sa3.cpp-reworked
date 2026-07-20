@@ -56,9 +56,9 @@ inline ggml_tensor* dit_diff_attn(ggml_context* ctx, ggml_tensor* q, ggml_tensor
 // One DiT block. x:[dim,S]; context:[dim,Ctx]; gcond:[6*dim] adaLN signal; ones:[1]=1.0.
 // local_cond:[local_dim,T] (inpaint) or nullptr — projected per-block and added to the T real tokens.
 inline ggml_tensor* dit_block(ggml_context* ctx, const GgufModel& W, const std::string& p,
-                              ggml_tensor* x, ggml_tensor* context, ggml_tensor* gcond,
-                              ggml_tensor* pos, ggml_tensor* ones, const DitConfig& c,
-                              ggml_tensor* local_cond = nullptr) {
+                               ggml_tensor* x, ggml_tensor* context, ggml_tensor* gcond,
+                               ggml_tensor* pos, ggml_tensor* ones, const DitConfig& c,
+                               ggml_tensor* local_cond = nullptr) {
     const int dim = c.dim, hd = c.head_dim, nh = c.heads;
     const int64_t S = x->ne[1], Ctx = context->ne[1];
     const float scale = 1.0f / sqrtf((float)hd);

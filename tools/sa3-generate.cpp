@@ -49,7 +49,7 @@ int main(int argc, char** argv) {
     int frames = 128;
 
     auto usage = [](FILE* f) {
-        fprintf(f, "usage: sa3-generate [--models-dir DIR] [--model medium|small-music|small-sfx [--encoding f16|f32]]\n"
+        fprintf(f, "usage: sa3-generate [--models-dir DIR] [--model medium|small-music|small-sfx [--encoding f16|f32|q4_km|q8_0 (auto)]]\n"
                    "                     [--tok <f> --t5 <f> --cond <f> --dit <f> --same <f>]\n"
                    "                     --prompt \"...\" [--lora NAME|PATH [--lora-strength S]]... [--duration SEC | --frames N] [--steps N] [--threads N] [--seed S]\n"
                    "                     [--dist-shift LogSNR|Flux|Full|None [--dist-shift-params p1,p2,p3,p4]] [--duration-padding SEC]\n"

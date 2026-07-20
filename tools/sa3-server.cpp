@@ -49,6 +49,16 @@ namespace {
 std::mutex g_mtx;                         // serialize: one generation (one GPU graph) at a time
 std::unique_ptr<sa3::Pipeline> g_pipe;    // loaded lazily on first generate; freed on /unload
 std::atomic<bool> g_loaded{false};        // lock-free view for /health (won't block during a gen)
+std::string g_actual_encoding;            // encoding of the files actually loaded (q4_km/q8_0/f16/f32)
+
+// Derive the real encoding token from a resolved model path (DiT/SAME filenames carry it).
+static std::string detect_encoding(const std::string& p) {
+    if (p.find("Q4_KM") != std::string::npos) return "q4_km";
+    if (p.find("Q8_0")  != std::string::npos) return "q8_0";
+    if (p.find("F32")   != std::string::npos) return "f32";
+    if (p.find("F16")   != std::string::npos) return "f16";
+    return "f16";
+}
 
 // Single source of truth for all config defaults (set from CLI flags at startup).
 Sa3Config cfg;
@@ -430,6 +440,7 @@ bool ensure_loaded(std::string& err) {
         g_pipe->load(mp, cfg.cpu_threads, cfg.device.empty() ? nullptr : cfg.device.c_str(), cfg.gpu_selector.empty() ? nullptr : cfg.gpu_selector.c_str());
     } catch (const std::exception& e) { g_pipe.reset(); g_loaded = false; err = e.what(); return false; }
     g_loaded = true;
+    g_actual_encoding = detect_encoding(mp.dit.empty() ? mp.same : mp.dit);
     return true;
 }
 
@@ -768,7 +779,7 @@ int main(int argc, char** argv) {
         else if (a == "--dump-cond")    { auto v = val(); if (!v.empty()) cfg.dump_cond_dir = v; }
         else if (a == "--help" || a == "-h") {
             fprintf(stdout, "usage: sa3-server [--host ADDR] [--port N] [--models-dir DIR] [--model medium|small-music|small-sfx]\n"
-                            "                     [--encoding f16|f32] [--device DEVICE] [--gpu SELECTOR] [--threads N]\n"
+                            "                     [--encoding f16|f32|q4_km|q8_0 (auto)] [--device DEVICE] [--gpu SELECTOR] [--threads N]\n"
                             "                     [--flash-attn 0|1] [--same-flash-attn 0|1|2] [--profile 0|1] [--dump-cond DIR]\n");
             return 0;
         }
@@ -795,7 +806,8 @@ int main(int argc, char** argv) {
     svr.Get("/health", [](const httplib::Request&, httplib::Response& res) {
         const bool loaded = g_loaded.load();
         std::string body = "{\"status\":\"ok\",\"model\":\"" + cfg.model_variant + "\",\"encoding\":\"" +
-                           cfg.encoding + "\",\"loaded\":" + (loaded ? "true" : "false") +
+                           cfg.encoding + "\",\"actual_encoding\":\"" + g_actual_encoding +
+                           "\",\"loaded\":" + (loaded ? "true" : "false") +
                            ",\"loudness_defaults\":" + loudness_params_json(cfg.loudness) + "}";
         res.set_content(body, "application/json");
     });
@@ -1102,6 +1114,15 @@ int main(int argc, char** argv) {
 
     fprintf(stderr, "[sa3-server] http://%s:%d  model=%s/%s  models=%s  adapters=%s  prompts=%s  audio-in=%s  (async /poll_status; frugal default)\n",
             host.c_str(), port, cfg.model_variant.c_str(), cfg.encoding.c_str(), cfg.models_dir.c_str(), adir.c_str(), pdir.c_str(), aidir.c_str());
+
+    // Resolve once at startup so /health reports the actual encoding before the first
+    // generation (model load is lazy; the UI shows the label on connect).
+    {
+        sa3::ModelPaths mp; std::string rerr;
+        if (sa3::ModelPaths::resolve(cfg.models_dir, cfg.model_variant, cfg.encoding, mp, rerr))
+            g_actual_encoding = detect_encoding(mp.dit.empty() ? mp.same : mp.dit);
+    }
+
     if (!svr.listen(host.c_str(), port)) {
         fprintf(stderr, "[sa3-server] failed to bind %s:%d\n", host.c_str(), port);
         return 1;
